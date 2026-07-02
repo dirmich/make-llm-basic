@@ -1,0 +1,17 @@
+# 가상환경 및 캐시
+.venv/
+__pycache__/
+*.pyc
+
+# IDE 설정
+.idea/
+.vscode/
+
+# 사용자 요청 제외 폴더
+docs/
+.agents/
+.omx/
+.pytest_cache/
+book/
+/translate_book.py
+/translate_comments.py

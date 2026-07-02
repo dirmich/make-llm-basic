@@ -1,0 +1,11 @@
+Metadata-Version: 2.4
+Name: makellm-basic
+Version: 0.1.0
+Summary: Make LLM-basic: 기초편 LLM 구현 (dirmich / Highmaru Press)
+Author: dirmich
+License: MIT
+Requires-Python: >=3.10
+Requires-Dist: torch>=2.0
+Requires-Dist: numpy>=1.24
+Provides-Extra: dev
+Requires-Dist: pytest>=7.0; extra == "dev"
