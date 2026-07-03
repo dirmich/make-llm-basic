@@ -1,0 +1,286 @@
+\chapter{トランスフォーマーブロックの組み立て}
+\label{ch:transformer_block}
+
+この章では、5つのアテンションと4つの埋め込みを組み合わせて\keyterm{トランスフォーマブロック（transformer block)}を作成します。アテンションだけでは不足しており、FFN(Feed-Forward Network)、残差接続(residual connection)、レイヤ正規化(layer normalization)が一緒になって初めて意味のある表現を学習することができる。
+
+\section{変圧器ブロックの構造}
+
+1つのトランスブロックは、次の4つのコンポーネントで構成されています。
+
+\begin{enumerate}
+\item\textbf{Multi-Head Attention}: トークン間の情報交換
+\item\textbf{Feed-Forward Network (FFN)}: 位置別非線形変換
+\item\textbf{Residual Connection}：入力を出力に加えて深いネットワーク学習
+\item\textbf{Layer Normalization}: 学習安定化
+\end{enumerate}
+
+これらの4つがどのように組み合わせられるかがトランスブロックの核心です。 1巻ではPre-LN構造（GPT-2スタイル）を使用する。
+
+\begin{figure}[htbp]
+\centering
+\begin{tikzpicture}[
+  every node/.style={font=\small\sffamily},
+  box/.style={draw=inkblue, fill=inkblue!8, rounded corners=2pt, minimum width=3cm, minimum height=0.7cm},
+  norm/.style={draw=inkgreen, fill=inkgreen!10, rounded corners=2pt, minimum width=2.5cm, minimum height=0.6cm},
+  sum/.style={draw=inkred, fill=inkred!10, circle, minimum size=0.6cm}
+]
+  \node[box] (in) at (0, 0) {input $x$};
+  \node[norm] (ln1) at (0, -1) {LayerNorm};
+  \node[box] (attn) at (0, -2) {Multi-Head Attention};
+  \node[sum] (add1) at (0, -3) {$+$};
+  \node[norm] (ln2) at (0, -4) {LayerNorm};
+  \node[box] (ffn) at (0, -5) {FFN (GELU)};
+  \node[sum] (add2) at (0, -6) {$+$};
+  \node[box] (out) at (0, -7) {output};
+
+  % residual バイパス
+  \draw[inkblue, rounded corners=4pt] (-2, 0) -- (-2, -3);
+  \draw[-{Stealth[length=4pt]}, inkblue] (-2, -3) -- (add1);
+  \draw[inkblue, rounded corners=4pt] (2, -3) -- (2, -6);
+  \draw[-{Stealth[length=4pt]}, inkblue] (2, -6) -- (add2);
+
+  % メインフロー
+  \draw[-{Stealth[length=4pt]}, inkblue] (in) -- (ln1);
+  \draw[-{Stealth[length=4pt]}, inkblue] (ln1) -- (attn);
+  \draw[-{Stealth[length=4pt]}, inkblue] (attn) -- (add1);
+  \draw[-{Stealth[length=4pt]}, inkblue] (add1) -- (ln2);
+  \draw[-{Stealth[length=4pt]}, inkblue] (ln2) -- (ffn);
+  \draw[-{Stealth[length=4pt]}, inkblue] (ffn) -- (add2);
+  \draw[-{Stealth[length=4pt]}, inkblue] (add2) -- (out);
+
+  % ラベル
+  \node[inkgray, font=\scriptsize, anchor=west] at (-3.5, -1.5) {residual};
+  \node[inkgray, font=\scriptsize, anchor=west] at (2.5, -4.5) {residual};
+\end{tikzpicture}
+\caption{Pre-LN 変圧器ブロック構造. アテンションと FFN それぞれへの残差接続と LayerNormあり.}
+\label{fig:transformer-block}
+\end{figure}
+
+\section{Feed-Forward Network (FFN)}
+
+アテンションはトークン間の「水平」情報交換を実行します。一方、FFNは各トークン位置で「垂直」非線形変換を実行します。構造は簡単です：
+
+\[
+\text{FFN}(x) = \text{Linear}\_2(\text{GELU}(\text{Linear}\_1(x)))
+\]
+
+$\text{Linear}\_1$は$d\_{model} \to d\_{ff}$に拡張し、$\text{Linear}\_2$は$d\_{ff} \to d\_{model}$に戻ります。$d\_{ff}$は通常$4 d\_{model}$であり、この「拡張 - 縮小」パターンは非線形表現力を与えます。
+
+\subsection{直観: なぜ拡張-縮小?}
+
+$d\_{model} = 512$を$d\_{ff} = 2048$に拡張して再び512に縮小するのは、「より大きな表現空間での操作」です。高次元空間では、より複雑な結晶境界を描くことができます。活性化関数ＧＥＬＵの非線形性と組み合わせて、ＦＦＮは単純な線形変換以上を学習する。
+
+実際、FFNは「キー値メモリ」として機能するという研究結果（Geva et al。2021）もあります。$\text{Linear}\_1$の行ベクトルが「キー」、$\text{Linear}\_2$の列ベクトルが「値」として動作し、FFNが事実情報検索メカニズムであるという解釈です。
+
+\begin{lstlisting}[language=Python]
+import torch.nn.functional as F
+
+class FeedForward(nn.Module):
+    def __init__(self, d_model: int, d_ff: int, dropout: float = 0.1):
+        super().__init__()
+        self.w1 = nn.Linear(d_model, d_ff)
+        self.w2 = nn.Linear(d_ff, d_model)
+        self.dropout = nn.Dropout(dropout)
+        self._init_weights()
+
+    def _init_weights(self) -> None:
+        nn.init.normal_(self.w1.weight, mean=0.0, std=0.02)
+        nn.init.normal_(self.w2.weight, mean=0.0, std=0.02)
+        if self.w1.bias is not None:
+            nn.init.zeros_(self.w1.bias)
+        if self.w2.bias is not None:
+            nn.init.zeros_(self.w2.bias)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """x: [batch, seq, d_model] -> [batch, seq, d_model]"""
+        return self.dropout(self.w2(F.gelu(self.w1(x))))
+\end{lstlisting}
+
+\section{GELU vs ReLU}
+
+元のトランスはReLUを使用していましたが、GPT-2以降は\keyterm{GELU(Gaussian Error Linear Unit)}が標準です。 GELUはReLUの「冷たい」0/1しきい値の代わりにガウス累積分布を使用してスムーズに切り替えます。
+
+\begin{formula}[GELU]
+\[
+\text{GELU}(x) = x \cdot \Phi(x) \approx 0.5 x \left(1 + \tanh\left[\sqrt{2/\pi}(x + 0.044715 x^3)\right]\right)
+\]
+$\Phi(x)$は標準正規分布の累積分布関数です。$x < 0$でも小さい負の値を許容するので、勾配の流れが良いです。
+\end{formula}
+
+\begin{figure}[htbp]
+\centering
+\begin{tikzpicture}[
+  scale=0.8,
+  every node/.style={font=\small\sffamily}
+]
+  % 軸
+  \draw[inkblue, line width=0.5pt, ->] (-3, 0) -- (3, 0) node[right] {$x$};
+  \draw[inkblue, line width=0.5pt, ->] (0, -0.5) -- (0, 2.5) node[above] {activation};
+  % ReLU(折りたたみ)
+  \draw[inkred, line width=1pt] (-3, 0) -- (0, 0) -- (2.5, 2.3);
+  \node[inkred, font=\scriptsize] at (2, 2.3) {ReLU};
+  % GELU(ソフトカーブ)
+  \draw[inkblue, line width=1pt, domain=-3:2.5, samples=50] plot (\x, {0.5*\x*(1+tanh(0.7978*(\x+0.044715*\x*\x*\x)))});
+  \node[inkblue, font=\scriptsize] at (1.5, 1.5) {GELU};
+\end{tikzpicture}
+\caption{ReLU vs GELU. ReLUは   --  で正確にゼロですが、, GELUは 小さい負の値を許容してスムーズに切り替える.}
+\label{fig:gelu-relu}
+\end{figure}
+
+\subsection{なぜ GELUもっと良い?}
+
+ReLUは$x < 0$で完全にゼロになり、グラデーションもゼロになります（「死んだReLU」の問題）。 GELUは小さな負の値を受け入れ、グラデーションが常に流れます。また、切り替え点が滑らかで微分可能で、最適化が安定している。
+
+実際、GPT-2、BERT、RoBERTaなど、ほとんどの現代モデルはGELUを使用しています。 2巻では、SwiGLUというより進化した活性化関数を扱う。
+
+\section{残差接続(Residual Connection)}
+
+\keyterm{残差接続（residual connection)}は入力を出力に直接加算する演算です。$y = x + f(x)$。この単純なアイデアが深いネットワーク学習を可能にした。 He et al。 （2016）のResNetが画像分類で100層以上の学習を可能にしたのがその始まりだ。
+
+\subsection{直観: なぜ残差が役に立つのか?}
+
+残差がない場合、ネットワークは$f(x) = y$を学習する必要があります。深くなるほど、このマッピングを学習するのは困難です。残差がある場合は$f(x) = y - x$、つまり「残差」だけを学習します。入力$x$がすでに$y$に近い場合、$f$は小さな補正だけです。
+
+また、逆伝播時にグラデーションが「近道」を通って直接流れます。$y = x + f(x)$の微分は$\frac{dy}{dx} = 1 + f'(x)$です。$f'(x) = 0$でもグラデーションは1になって消えません。
+
+トランスフォーマブロックには2つの残差接続があります。アテンションの1つ、FFNの1つ。 GPTは12$\sim$96階なので、残差がなければ学習できません。
+
+\begin{warnbox}[残差のない100階ネットワーク]
+実験的に残差を除いて100層ネットワークを学習すれば損失は減らない。グラデーションが逆伝播の途中消え、前の層が学習されないからだ。残差接続は単純だが深いネットワークの不可欠な要素です。
+\end{warnbox}
+
+\section{Pre-LN vs Post-LN}
+
+LayerNormの位置に応じて2つのバリエーションがあります。
+
+\subsection{Post-LN (Vaswani オリジナル）}
+
+元のトランスはLayerNormをアテンション/FFN\emph{裏}に配置しました：
+
+\[
+x = \text{LN}(x + \text{Attn}(x))
+\]
+
+しかし、この構造は深いネットワークで学習が不安定である。初期化に非常に敏感で、warmupがなければ発散しやすい。
+
+\subsection{Pre-LN (GPT-2スタイル)}
+
+LayerNormをアテンション/FFN\emph{フロント}に配置します。
+
+\[
+x = x + \text{Attn}(\text{LN}(x))
+\]
+
+この構造は、残差パスにLayerNormがないため、グラデーションがよりよく流れます。深いネットワークでもwarmupなしで安定的に学習され、現代LLMの標準だ。
+
+\subsection{なぜ Pre-LNこれはより安定していますか?}
+
+Post-LNで残差パス$x \to x + \text{Attn}(x) \to \text{LN}(\cdot)$を通過すると、グラデーションはLayerNormを通過する必要があります。 LayerNormは分散に分割する操作であり、グラデーションをスケーリングします。
+
+Pre-LNは、残差経路$x \to x + \text{Attn}(\text{LN}(x))$から$x$がLayerNormを経由せずに直接流れます。アテンション出力のみ LayerNorm を経た後に加算される。グラデーションがidentityパスを通じてそのまま流れ、深いネットワークでも学習が可能だ。
+
+\begin{lstlisting}[language=Python]
+class TransformerBlock(nn.Module):
+    def __init__(self, config: ModelConfig, layer_norm_style: str = "pre"):
+        super().__init__()
+        self.layer_norm_style = layer_norm_style
+        self.ln1 = nn.LayerNorm(config.d_model, eps=config.layer_norm_eps)
+        self.ln2 = nn.LayerNorm(config.d_model, eps=config.layer_norm_eps)
+        self.attn = MultiHeadAttention(config)
+        self.ffn = FeedForward(config.d_model, config.d_ff, config.dropout)
+
+    def forward(self, x, mask=None):
+        if self.layer_norm_style == "pre":
+            # Pre-LN: 正規化 -> アテンション -> 残差
+            x = x + self.attn(self.ln1(x), mask=mask)
+            x = x + self.ffn(self.ln2(x))
+        else:
+            # Post-LN: アテンション -> 残差 -> 正規化
+            x = self.ln1(x + self.attn(x, mask=mask))
+            x = self.ln2(x + self.ffn(x))
+        return x
+\end{lstlisting}
+
+\begin{warnbox}[Pre-LNを書く理由]
+Post-LNは、初期勾配が残差経路ではなくLayerNormを介してのみ流れているため、深いネットワークから消える可能性があります。 Pre-LNは残差経路に何もなく、グラデーションがidentityに流れ、100階以上でも学習が可能だ。ただし、Pre-LNは最後に追加のLayerNormが必要です（次の章で\code{ln\_f}で実装）。
+\end{warnbox}
+
+\section{残差スケーリング}
+
+GPT-2は、残差ストリームに直接寄与する重み（アテンションの$W\_O$、FFNの$W\_2$）をより小さく初期化します。層が深くなるほど残差出力の分散が大きくなるのを防ぐためである。
+
+\begin{lstlisting}[language=Python]
+def _init_residuals(self, module: nn.Module) -> None:
+    """残差ストリームに直接寄与する投影重みを小さく初期化."""
+    if isinstance(module, nn.Linear):
+        if module.weight.shape[0] == self.config.d_model:
+            # 残差に入る出力: より小さい標準偏差で初期化
+            nn.init.normal_(module.weight, mean=0.0,
+                            std=0.02 / math.sqrt(2 * self.config.n_layers))
+\end{lstlisting}
+
+$1/\sqrt{2N}$スケーリングは、$N$層の場合の残差出力の分散が層数に比例して大きくなることを補正します。$N$が大きいほど、より小さな初期化が必要です。
+
+\subsection{なぜ   --  認可?}
+
+トランスブロックごとに残差に寄与する出力が2つ（アテンション、FFN）だ。$N$個のブロックの場合、合計$2N$個の出力が残差に加算されます。各出力の分散が$\sigma^2$の場合、和の分散は$2N \sigma^2$です。これが1になるには$\sigma = 1/\sqrt{2N}$にする必要があります。
+
+\section{ブロックテスト}
+
+\begin{lstlisting}[language=Python]
+def test_block_shape(small_config):
+    block = TransformerBlock(small_config)
+    x = torch.randn(2, 8, small_config.d_model)
+    out = block(x)
+    assert out.shape == (2, 8, small_config.d_model)
+
+def test_block_residual_connection(small_config):
+    """残差接続がある場合、入力と出力の差は有限でなければなりません."""
+    block = TransformerBlock(small_config)
+    block.eval()
+    x = torch.randn(2, 8, small_config.d_model)
+    out = block(x)
+    diff = (out - x).abs().mean()
+    assert diff.item() < 5.0  # 残差が大きすぎると正規化の問題
+
+def test_feedforward_shape(small_config):
+    ffn = FeedForward(small_config.d_model, small_config.d_ff)
+    x = torch.randn(2, 8, small_config.d_model)
+    out = ffn(x)
+    assert out.shape == x.shape
+\end{lstlisting}
+
+\section{変圧器ブロックの計算量}
+
+ブロック1つのFLOPsは約:
+\begin{itemize}
+\item QKVプロジェクション：$3 \cdot L \cdot d^2$
+\item アテンションスコア：$L^2 \cdot d$
+\item アテンション出力投影：$L \cdot d^2$
+  \item FFN: $2 \cdot L \cdot d \cdot d\_{ff} = 8 L d^2$ (since $d\_{ff} = 4d$)
+\end{itemize}
+
+合計$O(L \cdot d^2)$であり、アテンションの$O(L^2 d)$は$L < d$の場合は無視できます。実際のGPT-3（$d = 12288$、$L = 2048$）では、$L \cdot d^2 = 3 \times 10^{11}$、$L^2 \cdot d = 5 \times 10^{10}$とFFNがより支配的です。
+
+\section{要約}
+
+\begin{itemize}
+\item トランスフォーマブロック = アテンション + FFN + 残差接続 + LayerNorm.
+\item FFN は位置別の非線形変換 (Linear$\to$GELU$\to$Linear).
+\item GELUはReLUよりもスムーズな移行で学習安定性を向上。
+\item 残差接続は深いネットワーク学習の中核です。
+\item Pre-LNがPost-LNより学習安定性が良く、現代LLM規格。
+\item 残差スケーリング$1/\sqrt{2N}$で深いネットワークの分散爆発を防ぎます。
+\end{itemize}
+
+\section{練習問題}
+
+\begin{enumerate}
+\item FFNの$d\_{ff}$を$4d\_{model}$の代わりに$d\_{model}$にすると、何が起こりますか？
+\item 残差接続を削除して12層モデルを学習すると、どのような現象が観察されますか？
+\item Pre-LNで最後のブロックの後に追加のLayerNormが必要なのはなぜですか？
+\item GELUの代わりにSigmoid Linear Unit（SiLU、$x \cdot \sigma(x)$）を使用すると、どのような違いがありますか？
+\item 残差スケーリングなしで100階のモデルを初期化すると、学習の初期に何が起こりますか？
+\end{enumerate}
+
+次の章では、このブロックを$N$層積み上げて完全な GPT モデルを作成し、学習ループを構築する。

@@ -1,0 +1,125 @@
+\chapter{クリーンアップと次のステップ}
+\label{ch:wrapup}
+
+おめでとうございます。ここまで従ったなら、読者は今トークナイザーからテキスト生成までLLMのすべてのコンポーネントを直接実装してみたのだ。この章では、1冊をまとめて、2巻\textit{Make LLM-advanced}で取り上げる上級トピックを紹介します。
+
+\section{1巻まとめ}
+
+\subsection{実装したもの}
+
+\begin{center}
+\begin{tabularx}{\textwidth}{lX}
+\toprule
+\textbf{章}&\textbf{実装内容}\\
+\midrule
+第3章＆BPE、Unigramトークナイザー（学習/エンコード/デコード）\\
+第4章＆Token / Positional Embedding、EmbeddingStack \\
+第5章 & Scaled Dot-Product Attention, Causal Mask, Multi-Head Attention \\
+第6章＆FeedForward（GELU）、トランスフォーマーブロック（Pre-LN）\\
+第7章＆GPTモデル、LMDataset、Cross-Entropy、AdamW、Cosine LR、Trainer \\
+第8章＆Greedy / Temperature / Top-K / Top-Pサンプラー、generate関数\\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+\subsection{テスト}
+
+合計48のユニットテストがすべて合格します。形状テスト、数値テスト、統合テストにより、すべてのモジュールが正しく動作することを検証しました。
+
+\begin{lstlisting}[style=bashstyle]
+$ pytest tests/ -v
+========================= 48 passed in 2.47s =========================
+\end{lstlisting}
+
+\subsection{読者が持っているもの}
+
+これで読者は次のことができます。
+\begin{itemize}
+\item 自分の言葉でトークナイザーを学ぶ
+\item 任意のサイズGPTモデルを作成する（configのみを変更できます）
+\item CPU/GPUで学習ループを実行する
+\item さまざまなサンプリング戦略でテキストを生成する
+\item HuggingFace Transformersのコードを読むときの内部動作を理解する
+\end{itemize}
+
+\section{1巻の限界}
+
+正直に言えば、1巻で作ったモデルはChatGPTとは遠い。限界は大きく3つある。
+
+\textbf{サイズ}：1巻モデルは1000万$\sim$1億パラメータレベルです。 GPT-3は1,750億、GPT-4は推定1.7兆パラメータだ。このサイズの違いを克服するには、分散学習が必須です。
+
+\textbf{アーキテクチャ}：1巻は2017年のオリジナルトランスフォーマーに近い。現代LLM（LLaMA、Mistral、GPT-4）は、RoPE、GQA、SwiGLU、RMSNormなどのより効率的で信頼性の高いコンポーネントを使用しています。
+
+\textbf{ソート}：第1巻モデルは「次のトークン予測」だけを学びました。ユーザーの質問に答えるチャットボットにするには、SFT（Supervised Fine-Tuning）、RLHF（Reinforcement Learning from Human Feedback）、DPO（Direct Preference Optimization）などのソート技術が必要です。
+
+\section{2巻で扱うこと}
+
+2巻\textit{Make LLM-advanced}は、上記3つの制限を克服する方法を扱います。
+
+\subsection{分散学習(2  --  第4章）}
+
+\begin{itemize}
+\item\textbf{DDP (Distributed Data Parallel)}: 複数のGPUで同じモデルのレプリケーションを学習します。
+\item\textbf{FSDP (Fully Sharded Data Parallel)}：モデルをシャードに分割することでメモリを節約します。
+\item\textbf{ZeRO-1/2/3}：オプティマイザ/グラデーション/パラメータをシャーディング。
+\item\textbf{Pipeline Parallel}：モデルを階層別に別のGPUに配置。
+\item\textbf{Tensor Parallel}: 単一レイヤーを複数のGPUに分割(Megatron-LM).
+\end{itemize}
+
+\subsection{最新アーキテクチャ(5  --  第6章）}
+
+\begin{itemize}
+\item\textbf{RoPE (Rotary Position Embedding)}：複素数回転で位置エンコード。 extrapolation 優秀。
+\item\textbf{GQA (Grouped Query Attention)}：KVヘッドを減らして推論メモリを節約します。
+\item\textbf{SwiGLU}: GLU バリアントによる FFN パフォーマンスの向上. LLaMAが使用。
+\item\textbf{RMSNorm}: LayerNorm の軽量化バージョン。
+\item\textbf{MoE (Mixture-of-Experts)}：エキスパートネットワークプールでトークンごとの親K個のみを有効にします。
+\end{itemize}
+
+\subsection{量子化と推論の最適化（7章）}
+
+\begin{itemize}
+\item\textbf{INT8/INT4 量子化}: 重みを低ビット整数に変換することでメモリを4$\sim$8倍に節約。
+\item\textbf{AWQ}: アクティブ値統計を利用した精度損失の最小化。
+\item\textbf{GPTQ}：二次情報を使用した量子化。
+\item\textbf{KV Cache}：以前のトークンのK、Vを再利用して推論を加速します。
+\item\textbf{PagedAttention}: vLLM のページ単位の KV 管理によるメモリ断片化の解決.
+\end{itemize}
+
+\subsection{ソートとファインチューニング（8枚）}
+
+\begin{itemize}
+\item\textbf{SFT (Supervised Fine-Tuning)}：指導学習でチャットボット行動学習。
+\item\textbf{RLHF}：補償モデル+ PPOによる人間の好みの最適化。
+\item\textbf{DPO}: RLHFの複雑さなしに直接の好みを最適化。
+\item\textbf{LoRA}：低ランクアダプタで効率的なファインチューニング。
+\end{itemize}
+
+\subsection{データパイプライン（9章）}
+
+\begin{itemize}
+\item\textbf{品質フィルタ}: 長さ、言語、繰り返し率でフィルタリングします。
+\item\textbf{MinHash 重複排除}：Jaccard類似度近似による重複文書の検出。
+\item\textbf{合成データ}：テンプレートベースの学習データの生成。
+\end{itemize}
+
+\section{推奨学習パス}
+
+2冊に進む前におすすめのアクティビティ：
+
+\begin{enumerate}
+\item\textbf{小さなプロジェクト}: 1冊のコードで自分の関心のあるテキスト（例えば、ウィキバックと韓国語、GitHubコード）を学習してください。 10万トークン程度なら1時間以内に学習される。
+\item\textbf{論文を読む}：「Attention Is All You Need」（Vaswani et al。2017）、「Language Models are Few-Shot Learners」（Brown et al。2020）を読んでください。 1冊を読んだので、はるかに理解が上がるだろう。
+\item\textbf{HuggingFace コードを読む}：\code{transformers/models/gpt2/modeling\_gpt2.py}を開きます。私たちが作ったコードにどれだけ似ているのか、どのような違いがあるのか​​を比較してください。
+\end{enumerate}
+
+\section{最後に}
+
+LLMは複雑に見えますが、最終的にはトークナイザー、埋め込み、アテンション、FFN、学習ループの組み合わせです。この基本を習得すれば、どんな新しいアーキテクチャ、どんな新しい最適化技法が出てきても理解できる。 2巻では、この基盤の上にChatGPTレベルの技術を積み上げるだろう。
+
+コーディングを停止しないでください。実験を止めないでください。それが実力を育てる唯一の道だ。
+
+\begin{flushright}
+\textit{1巻終わり}\\[0.5em]
+\textbf{dirmich}
+\end{flushright}

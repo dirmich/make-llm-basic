@@ -1,0 +1,331 @@
+\chapter{アテンション機構}
+\label{ch:attention}
+
+この章では、トランスの重要な\keyterm{アテンション（attention)}メカニズムを実装します。 Scaled Dot-Product Attentionから始めて、Multi-Head Attentionまで段階的に見ていきます。
+
+\section{直観: アテンションとは何ですか}
+
+文章「マット・ベカウス・ザ・キャット・サットが00 -- はタイト」で「it」が何を指していますか？人は簡単に「猫」であることを知っています。コンピュータはどのようにわかりますか？アテンションはこの問題を解くメカニズムです。各単語が他のすべての単語に「どれだけ注意を払うか」を学び、「it」が「cat」に高い重みを与えるようにします。
+
+式で、アテンションは、与えられたクエリ$Q$に対して、すべてのキー$K$との類似度を計算し、その類似度で値(value)$V$を加重加算する演算です。
+
+\begin{formula}[アテンションの一般定義]
+\[
+\text{Attention}(Q, K, V) = \text{softmax}\left(\frac{Q \cdot K^T}{\sqrt{d\_k}}\right) \cdot V
+\]
+\begin{itemize}
+\item $Q$: クエリ (今見ているトークンの表現)
+\item $K$：キー（他のトークンの「ラベル」）
+\item $V$：値（他のトークンの「内容」）
+\item $d\_k$：キーの次元。$\sqrt{d\_k}$で割る理由は dot product が大きくなり softmax が飽和するのを防ぐためです。
+\end{itemize}
+\end{formula}
+
+\subsection{直感的なたとえ話: 図書館検索}
+
+図書館で本を探す状況を想像しましょう。あなたが望む情報（クエリ$Q$）を持って図書館に行きます。各本にはタイトルとキーワード（キー$K$）があり、内容（値$V$）があります。図書館システムは、あなたのクエリを各書籍のキーと比較して類似度を計算し、最も類似した書籍の内容を重み付けして合計することで答えを与えます。
+
+アテンションはこの過程を微分可能にしたものだ。 「類似度」をドット製品に、「重み付き合計」をsoftmaxの重みで実行します。
+
+\section{Q, K, Vどこから来るの？}
+
+トランスでは、$Q, K, V$はすべて同じ入力$x$の線形変換で作成されます。
+
+\[
+Q = x W\_Q, \quad K = x W\_K, \quad V = x W\_V
+\]
+
+ここで$W\_Q, W\_K, W\_V$は学習可能な行列です。これにより、同じ入力について「質問」、「ラベル」、「内容」の3つの観点を学習できます。
+
+\begin{infobox}[なぜ3つの異なる行列ですか？]
+同じ$x$を3回使用せずに$W\_Q, W\_K, W\_V$に変換するのは、「役割分担」によるものです。クエリは「何が見つかるか」、キーは「何があるか」、値は「実際の内容」を表す必要があります。同じベクトルで3つの役割をすべてするのは難しい。線形変換を通じて、各役割に合った「表象空間」に投影するのです。
+\end{infobox}
+
+\section{スケーリング: なぜ   --  に分けるか?}
+
+$Q \cdot K^T$は$d\_k$次元ベクトルの内積です。$d\_k$が大きいと内積値が大きくなります。$Q, K$の元素が平均0、分散1とすると、内積$\sum\_{i=1}^{d\_k} Q\_i K\_i$の分散は$d\_k$となる。
+
+内積値が大きいと、softmax出力はワンホットに近づきます（1つの値は1、残りの0）。こうなるとグラデーションがほぼゼロになり学習が止まる。$\sqrt{d\_k}$で割ると分散が1になり、softmaxがスムーズに分布する。
+
+\begin{formula}[スケーリングの効果]
+\[
+\text{softmax}\left(\frac{Q K^T}{\sqrt{d\_k}}\right) \quad \text{vs} \quad \text{softmax}(Q K^T)
+\]
+スケーリングしないと$d\_k = 64$のとき内積値が$\pm 64$まで行くことができ、softmaxが飽和。スケーリングすると$\pm 8$の範囲に減り、滑らかな分布。
+\end{formula}
+
+\section{Scaled Dot-Product Attention 実装}
+
+最も基本的な形から始めましょう。 PyTorch 2.0の\code{F.scaled\_dot\_product\_attention}（SDPA）を使用すると、メモリ効率が高く高速です。
+
+\begin{lstlisting}[language=Python]
+import torch
+import torch.nn.functional as F
+
+class ScaledDotProductAttention(nn.Module):
+    def __init__(self, dropout: float = 0.0):
+        super().__init__()
+        self.dropout_p = dropout
+
+    def forward(self, q, k, v, mask=None):
+        # q, k, v: [batch, n_heads, seq, d_head]
+        # mask: [batch, 1, seq, seq] または [seq, seq]
+        out = F.scaled_dot_product_attention(
+            q, k, v, attn_mask=mask,
+            dropout_p=self.dropout_p if self.training else 0.0,
+        )
+        return out
+\end{lstlisting}
+
+SDPAはC++レベルで最適化されており、Pythonループでsoftmaxを直接実装するよりも数十倍速い。また、Flash Attentionのような最新のアルゴリズムを自動的に活用する。
+
+\begin{notebox}[Flash Attention]
+Flash Attention（Dao et al。2022）は、アテンション計算をGPUメモリ階層に合わせて再設計し、メモリアクセスを減らし、速度を2$\sim$4倍向上させたアルゴリズムです。 PyTorch 2.0のSDPAは自動的にFlash Attentionを有効にします。私たちが直接実装する必要なしに\code{F.scaled\_dot\_product\_attention}一行で恩恵を受ける。
+\end{notebox}
+
+\section{因果マスク（Causal Mask)}
+
+自己回帰言語モデルでは、「未来」を見るべきではありません。トークン$t$を予測するときにトークン$t+1, t+2, \dots$を見てはいけないという意味だ。このためにアテンションスコア行列の上三角（主対角線上）を$-\infty$でマスキングして softmax 後 0 になるようにする。
+
+\begin{lstlisting}[language=Python]
+def make_causal_mask(seq_len: int, device="cpu") -> torch.Tensor:
+    """ハ三角マスク. 将来のトークン -infでマスキング."""
+    mask = torch.full((seq_len, seq_len), float("-inf"), device=device)
+    mask = torch.triu(mask, diagonal=1)  # 主対角線の上 -infロー
+    return mask
+\end{lstlisting}
+
+\begin{figure}[htbp]
+\centering
+\begin{tikzpicture}[
+  scale=0.7,
+  every node/.style={font=\small\sffamily}
+]
+  % 5x5マスクの可視化
+  \foreach \i in {0, 1, 2, 3, 4} {
+    \foreach \j in {0, 1, 2, 3, 4} {
+      \pgfmathsetmacro{\val}{ifthenelse(\j <= \i, "0", "-inf")}
+      \pgfmathsetmacro{\col}{ifthenelse(\j <= \i, "inkblue!10", "inkred!15")}
+      \node[draw=inkgray, fill=\col, minimum size=0.8cm] at (\j*0.8, -\i*0.8) {\val};
+    }
+  }
+  % ラベル
+  \node[inkgray, anchor=east] at (-0.5, 0) {token 0};
+  \node[inkgray, anchor=east] at (-0.5, -3.2) {token 4};
+  \node[inkgray, anchor=south] at (0, 0.5) {token 0};
+  \node[inkgray, anchor=south] at (3.2, 0.5) {token 4};
+\end{tikzpicture}
+\caption{因果マスク（5  --  5). 青 = アテンション許可(0), 赤 = 将来のトークンをブロックする（  -- 1 --  ). 行   -- 2 --  はトークン   -- 3 --  加熱   -- 4 --   トークンにどれだけ注意を払うかを示す.}
+\label{fig:causal-mask}
+\end{figure}
+
+マスクをアテンションスコアに加えると、マスクされた位置のスコアは$-\infty$になり、softmaxの後は0になります。つまり、将来のトークンの$V$が出力に寄与しなくなります。
+
+\subsection{なぜ   --  認可?}
+
+softmaxの式$\text{softmax}(x\_i) = e^{x\_i} / \sum\_j e^{x\_j}$から$x\_i = -\infty$なら$e^{-\infty} = 0$になります。したがって、マスクされた位置の重みは正確にゼロになります。単にゼロを加えるのとは異なります。ゼロを加えると、元のスコアがそのまま残り、softmaxの後もまだ正数になります。
+
+\section{Multi-Head Attention}
+
+単一のアテンションは1つの「視点」のみを学習できます。しかし、言語にはさまざまな関係がある：文法的関係（主語 - 動詞）、意味的関係（同義語、反義語）、談話関係（指語参照解決）など。\keyterm{マルチヘッドアテンション（Multi-Head Attention)}はこれを複数のヘッドに分割して並列処理します。
+
+\subsection{アイデア}
+
+$d\_{model}$次元を$h$個のヘッドに分割し、各ヘッドが$d\_{head} = d\_{model}/h$次元で独立してアテンションを行う。たとえば、 -- 3​​ -- の場合は$d\_{head}=64$。
+
+\begin{formula}[Multi-Head Attention]
+\[
+\text{MHA}(x) = \text{Concat}(\text{head}\_1, \dots, \text{head}\_h) W\_O
+\]
+\[
+\text{head}\_i = \text{Attention}(Q W\_Q^i, K W\_K^i, V W\_V^i)
+\]
+各ヘッドの出力をつなぎ合わせた後、$W\_O$に線形変換。
+\end{formula}
+
+\subsection{なぜ頭を分けるのか?}
+
+$d\_{model} = 512$の単一アテンションと$d\_{head} = 64, h = 8$のマルチヘッドアテンションは、合計パラメータ数が同じです。しかし、マルチヘッドは各ヘッドが異なるパターンを学習することができます。例えば：
+\begin{itemize}
+\item ヘッド1：主語と動詞の関係
+\item ヘッド2：形容詞 - 名詞式
+\item ヘッド3：ディレクティブリファレンス
+\item ヘッド 4: 文章境界
+\end{itemize}
+
+実際にアテンションヘッドを視覚化してみると（例えばBertViz）、異なるヘッドが確かに異なるパターンに注目することがわかります。
+
+\begin{figure}[htbp]
+\centering
+\begin{tikzpicture}[
+  every node/.style={font=\small\sffamily},
+  box/.style={draw=inkblue, fill=inkblue!8, rounded corners=2pt, minimum width=2.2cm, minimum height=0.6cm},
+  head/.style={draw=inkred, fill=inkred!10, rounded corners=2pt, minimum width=1.6cm, minimum height=0.5cm, font=\scriptsize\sffamily}
+]
+  \node[box] (in) at (0, 0) {input [batch, seq, d\_model]};
+  \node[box, below=0.5cm of in] (qkv) {QKV proj $\to$ split};
+  % ヘッド
+  \node[head] (h1) at (-3, -2) {head 1};
+  \node[head] (h2) at (-1, -2) {head 2};
+  \node[inkgray, font=\scriptsize] at (1, -2) {$\cdots$};
+  \node[head] (h3) at (3, -2) {head h};
+  \node[box, below=0.6cm of $(h1)!0.5!(h3)$] (cat) {Concat $\to$ O proj};
+  \node[box, below=0.4cm of cat] (out) {output [batch, seq, d\_model]};
+
+  \draw[-{Stealth[length=4pt]}, inkblue] (in) -- (qkv);
+  \draw[-{Stealth[length=4pt]}, inkblue] (qkv) -- (h1);
+  \draw[-{Stealth[length=4pt]}, inkblue] (qkv) -- (h2);
+  \draw[-{Stealth[length=4pt]}, inkblue] (qkv) -- (h3);
+  \draw[-{Stealth[length=4pt]}, inkblue] (h1) -- (cat);
+  \draw[-{Stealth[length=4pt]}, inkblue] (h2) -- (cat);
+  \draw[-{Stealth[length=4pt]}, inkblue] (h3) -- (cat);
+  \draw[-{Stealth[length=4pt]}, inkblue] (cat) -- (out);
+\end{tikzpicture}
+\caption{Multi-Head Attention 構造. 入力   --  犬ヘッドに分割して並列アテンションを行った後の合針.}
+\label{fig:mha}
+\end{figure}
+
+\subsection{実装}
+
+効率のために$Q, K, V$を一度に計算します。入力$x$に対して$3 d\_{model}$次元に投影した後、ヘッド別に分割する。
+
+\begin{lstlisting}[language=Python]
+class MultiHeadAttention(nn.Module):
+    def __init__(self, config: ModelConfig):
+        super().__init__()
+        self.d_model = config.d_model
+        self.n_heads = config.n_heads
+        self.d_head = config.d_model // config.n_heads
+        # Q, K, Vを一度に計算（結合プロジェクション）
+        self.qkv_proj = nn.Linear(config.d_model, 3 * config.d_model, bias=config.use_bias)
+        self.o_proj = nn.Linear(config.d_model, config.d_model, bias=config.use_bias)
+        self.attention = ScaledDotProductAttention(dropout=config.dropout)
+        self.dropout = nn.Dropout(config.dropout)
+
+    def forward(self, x, mask=None):
+        batch, seq, _ = x.shape
+        # [batch, seq, 3*d_model] -> [batch, seq, 3, n_heads, d_head]
+        qkv = self.qkv_proj(x).view(batch, seq, 3, self.n_heads, self.d_head)
+        # [3, batch, n_heads, seq, d_head]
+        qkv = qkv.permute(2, 0, 3, 1, 4)
+        q, k, v = qkv[0], qkv[1], qkv[2]
+
+        if mask is not None and mask.dim() == 2:
+            mask = mask.unsqueeze(0).unsqueeze(0)  # [1, 1, seq, seq]
+
+        # アテンション: [batch, n_heads, seq, d_head]
+        attn_out = self.attention(q, k, v, mask=mask)
+        # ヘッドを合わせる: [batch, seq, d_model]
+        attn_out = attn_out.transpose(1, 2).contiguous().view(batch, seq, self.d_model)
+        return self.dropout(self.o_proj(attn_out))
+\end{lstlisting}
+
+\begin{notebox}[なぜQKVを一度に計算するのですか？]
+3つの\code{nn.Linear}を別々に書くのではなく、\code{3 * d\_model}出力を持つ1つの\code{nn.Linear}を書く理由は効率性です。 GPUは、大きな行列演算を一度に実行するために最適化されています。 3回の小さな演算よりも1回の大きな演算が高速です。分割は\code{view + permute}でメモリ再構成なしで実行されます。
+\end{notebox}
+
+\section{因果性テスト}
+
+アテンションモジュールの最も重要なテストは、「因果マ​​スクが実際に将来のトークンをブロックするか」です。次のテストはこれを検証します。
+
+\begin{lstlisting}[language=Python]
+def test_attention_is_causal(small_config):
+    """場所 iの出力 場所 i+1以降の影響を受けないでください."""
+    attn = MultiHeadAttention(small_config)
+    attn.eval()
+    x = torch.randn(1, 6, small_config.d_model)
+    mask = make_causal_mask(6)
+    out1 = attn(x, mask=mask)
+    # xの最後の位置を変えても前位置の出力は変わらないはず
+    x2 = x.clone()
+    x2[:, -1] = torch.randn(1, small_config.d_model)
+    out2 = attn(x2, mask=mask)
+    # 前の5つの位置は同じでなければなりません
+    assert torch.allclose(out1[:, :5], out2[:, :5], atol=1e-5)
+\end{lstlisting}
+
+このテストに合格すると、因果マスクが正しく機能していることを確認できます。失敗した場合、マスクが反転しているか、次元が間違っています。
+
+\section{Self-Attention vs Cross-Attention}
+
+この章で実装したのは\keyterm{自己アテンション（self-attention)}で、$Q, K, V$がすべて同じシーケンスから来ます。翻訳モデルのデコーダでは\keyterm{クロスアテンション（cross-attention)}も使用されます。これは$Q$がデコーダから、$K, V$がエンコーダから来ます。 GPTはデコーダのみの構造であり、自己アテンションのみを使用します。
+
+\subsection{クロスアテンションはどう違いますか?}
+
+クロスアテンションで$Q = x\_{dec} W\_Q$、$K = x\_{enc} W\_K$、$V = x\_{enc} W\_V$。デコーダの各位置がエンコーダ出力のすべての位置を参照する。翻訳では、デコーダが「翻訳する文章」を生成するときに原文の対応する単語を見つけるプロセスです。
+
+GPTはこの交差アテンションを持っていません。自己アテンションだけで次のトークンを予測する。これがGPTを「デコーターのみ」モデルと呼ぶ理由です。
+
+\section{アテンション計算量分析}
+
+アテンションの計算量は$O(L^2 \cdot d)$です。$L$はシーケンス長です。シーケンスが長くなると、2乗に増加します。
+
+\begin{center}
+\begin{tabularx}{\textwidth}{lXX}
+\toprule
+\textbf{シーケンス長}&\textbf{アテンション行列サイズ}&\textbf{FP16メモリ(シングルヘッド)}\\
+\midrule
+512 & $512 \times 512$ & 0.5 MB \\
+2048 & $2048 \times 2048$ & 8 MB \\
+8192 & $8192 \times 8192$ & 128 MB \\
+32768 & $32768 \times 32768$ & 2 GB \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+これが長い文脈処理が難しい理由だ。第2巻第7章では、KVキャッシュとPagedAttentionでこのコストを削減する方法について説明します。
+
+\section{練習: アテンション重みの可視化}
+
+学習したモデルのアテンションの重みを視覚化すると、モデルがどのパターンに注目しているかがわかります。
+
+\begin{lstlisting}[language=Python]
+import matplotlib.pyplot as plt
+import math
+from makellm.model.attention import make_causal_mask
+
+# アテンション重みの手動計算と可視化（SDPAは重みを内部的にのみ管理するため、デバッグ時に直接計算）
+model.eval()
+with torch.no_grad():
+    x = torch.randn(1, 10, model.config.d_model) # [batch=1, seq=10, d_model]
+    x_norm = model.blocks[-1].ln1(x)
+    qkv = model.blocks[-1].attn.qkv_proj(x_norm)
+    batch, seq, _ = x.shape
+    qkv = qkv.view(batch, seq, 3, model.config.n_heads, model.config.d_head).permute(2, 0, 3, 1, 4)
+    q, k = qkv[0], qkv[1]  # [1, n_heads, seq, d_head]
+    
+    # 0番目のヘッドの重みの計算: (Q @ K^T) / sqrt(d_head)
+    scores = (q[0, 0] @ k[0, 0].T) / math.sqrt(model.config.d_head)
+    mask = make_causal_mask(seq)
+    attn_weights = torch.softmax(scores + mask, dim=-1)  # [seq, seq]
+
+plt.imshow(attn_weights.numpy(), cmap='viridis')
+plt.colorbar()
+plt.xlabel('key position')
+plt.ylabel('query position')
+plt.title('Attention weights (head 0, last layer)')
+\end{lstlisting}
+
+\section{要約}
+
+\begin{itemize}
+\item アテンションは、クエリ - キー類似度で値を重み付けして合計する操作です。
+\item $\sqrt{d\_k}$にスケーリングしてソフトマックスの飽和を防ぎます。
+\item 因果マスクで将来トークンをブロックして自己回帰モデルになる。
+\item マルチヘッドは$d\_{model}$を$h$個のヘッドに分割してさまざまな関係を学習。
+\item QKVを一度に計算してGPU効率を最大化。
+\item PyTorch 2.0のSDPAを活用すると、最適化されたアテンションを1行で使用可能。
+\item アテンション計算量は$O(L^2)$で長いシーケンスでボトルネック。
+\end{itemize}
+
+\section{練習問題}
+
+\begin{enumerate}
+\item $\sqrt{d\_k}$スケーリングを除くと、学習はどのように変わりますか？$d\_k = 64$のときにsoftmax出力の分布を計算してください。
+\item 因果マスクをかぶらないとどうなりますか？学習時と推論時それぞれ説明しなさい。
+\item ヘッド数$h$を1にすると（シングルヘッド）マルチヘッドとどのような違いがあるのか​​？
+\item ヘッド数$h$を$d\_{model}$に等しくすると（つまり$d\_{head} = 1$）、何が起こりますか？
+\item アテンション行列$L \times L$のメモリが$L = 100,000$のときにいくらかを計算します (FP16 ベース)。
+\end{enumerate}
+
+次の章では、このアテンションを含むトランスブロックを組み立てます。アテンション＋ＦＦＮ＋残差＋ＬａｙｅｒＮｏｒｍの組み合わせがトランスを作る。

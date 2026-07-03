@@ -1,0 +1,234 @@
+\chapter{LLMとは何ですか}
+\label{ch:intro}
+
+この章では、ラージ言語モデル（LLM）が何であるか、どのように進化してきたのか、そしてなぜ自分で作るのが価値があるのか​​を見ていきます。コードより概念に集中するので、ディープラーニングに初めて触れる読者も気軽に読むことができる。
+
+\section{言語モデルとは}
+
+\keyterm{言語モデル（language model)}は、一連の単語（またはトークン）に確率を割り当てる統計モデルです。簡単に言うと、「この文は自然ですか？」を確率で判断する関数$P(w\_1, w\_2, \dots, w\_n)$です。例えば、「猫がマウスを追いかけている」は自然ですが、「マウスが猫を追う」という文脈によってはあまり自然ではないかもしれません。言語モデルはこの確率を学習します。
+
+歴史的に言語モデルはN-gramモデルから始まりニューラルネットワークベースのモデル（RNN、LSTM）を経て、2017年にトランスフォーマー（Transformer）の登場とともに飛躍的に発展した。特に、「次のトークン予測」という単純な目的で、インターネット規模のテキストを学習したモデルが驚くべき言語理解能力を見せながら、今日のLLM時代が開かれた。
+
+\begin{infobox}[次のトークン予測]
+LLMの学習目標は単純です：これまでのトークンを見て、次のトークンを予測すること。式で書くと
+\[
+P(w\_t \mid w\_1, w\_2, \dots, w\_{t-1})
+\]
+この条件付き確率を正確に推定することが言語モデルの唯一の目標だ。この単純な目標が大規模なデータと結合したとき、質問の回答、コード作成、翻訳などの複雑な能力が自然に登場する。
+
+なぜそう単純な目的が強力であるか。言語を「理解する」には、文法、常識、推論、事実知識などをすべて備えなければならない。次のトークンを正確に予測するには、モデルはこれらすべてを暗黙的に学習する必要があります。 「地球は太陽の周りを回る...」の後に「惑星」を予測するには天文学的常識が必要であり、「1 + 1 =」の後に「2」を予測するには算術が必要です。
+\end{infobox}
+
+\section{直観: 言語モデルをどう思うか}
+
+言語モデルに初めて触れる読者のためにたとえ話を聞いてみよう。言語モデルは「非常に多くの本を読んだ人」に似ています。この人は、すべての文章の「次の単語」を合わせる訓練を受けました。訓練が終わると、その人は質問を受けたときに最も自然な次の単語をつなぎ、答えを「生成」します。
+
+もちろん本物の人とは違う。言語モデルは、「理解」するよりも「パターンを一致させる」。しかし、十分に多くのパターンを学習すると、一見理解しているように見える。これがGPT-4のようなモデルが驚くべき答えを出す原理だ。
+
+\begin{notebox}[言語モデルは「理解する」ですか？]
+この質問は哲学的な議論です。機能主義の観点からは、「入力に適切に反応すれば理解する」と見なすことができ、逆に「内部表象がなければ理解しない」と見ることができる。この本では、哲学的議論ではなく「どのように動作するのか」に焦点を当てています。哲学に興味がある場合は、Searleの「中国語の部屋」の考え方を探してください。
+\end{notebox}
+
+\section{LLMの発展の歴史}
+
+\subsection{統計的言語モデル （1990年代  --  2000年代）}
+
+初期言語モデルは、N-gramという単純な統計技術を使用した。 「直前のN-1個の単語を見て、次の単語の確率を推定する」方法だ。たとえば、「キャット・サット・オン・ザ」の後に続く単語で、「mat」が「バナナ」よりも確率が高いことを数字統計で学習します。
+
+\begin{lstlisting}[language=Python]
+# N-gram 言語モデルのコアアイデア(簡素化)
+from collections import Counter
+
+corpus = "the cat sat on the mat the cat ran".split()
+# 2-gram (bigram) カウント
+bigrams = [(corpus[i], corpus[i+1]) for i in range(len(corpus)-1)]
+counts = Counter(bigrams)
+# P("mat" | "the") 推定
+p_mat_given_the = counts[("the", "mat")] / sum(1 for w1, w2 in bigrams if w1 == "the")
+print(f"P(mat|the) = {p_mat_given_the:.2f}")
+\end{lstlisting}
+
+しかし、N-gramには深刻な限界があった。文脈を短く見ることができ（Nが通常3$\sim$5）、未学習の組み合わせにはゼロの確率を割り当てる「スパース性」の問題がありました。これを補うためにスムージング技術が開発されたが、根本的な解決ではなかった。
+
+もう一つの問題は、「単語の意味」を捉えられないことでした。 「犬」と「犬」は同じ意味ですが、Nグラムではまったく異なる単語として扱われます。これを解決するために、単語を分散表現（distributed representation）に変えるニューラルネットワークベースのモデルが登場した。
+
+\subsection{ニューラルネットワーク言語モデル (2003  --  2017)}
+
+Bengio et al。 （2003）は最初にニューラルネットワークベースの言語モデルを提案した。単語を低次元密集ベクトル（埋め込み）で表現し、これらの埋め込みをニューラルネットワークに入れて次の単語確率を予測する方式だった。その後、RNN（Recurrent Neural Network）とLSTM（Long Short-Term Memory）が登場し、より長いコンテキストを処理できるようになった。
+
+\begin{infobox}[Word2Vecと埋め込み]
+Mikolovら。 （2013）のWord2Vecは、単語を100$\sim$300次元ベクトルとして表現し、「似た意味の単語はベクトル空間に近い」ことを示しました。有名な例:$\vec{\text{king}} - \vec{\text{man}} + \vec{\text{woman}} \approx \vec{\text{queen}}$。このアイデアは、第4章で実装する埋め込みの基盤です。
+\end{infobox}
+
+\begin{warnbox}[RNNの限界]
+RNNは以前の時点の隠れ状態を現在の時点に伝達する構造だ。理論的には無限のコンテキストを扱うことができますが、実際には逆伝播時にグラデーションが消えたり爆発する\keyterm{vanishing/exploding gradient}問題が発生します。これにより、実際に処理可能なコンテキストの長さは数十$\sim$数百トークンに過ぎませんでした。また、順次処理のみ可能で、GPU並列化に非効率的だった。
+
+LSTM（Long Short-Term Memory）はゲートメカニズムでこの問題を部分的に緩和したが、根本的な解決ではなかった。 100語以上の文脈はまだ難しかった。
+\end{warnbox}
+
+\subsection{トランスフォーマーの登場 (2017)}
+
+2017年にVaswani et al。が発表した「Attention Is All You Need」は、言語モデルの版図を完全に変えました。 RNNなしでアテンションメカニズムだけでシーケンスを処理するトランスフォーマー構造を提案した。トランスの重要な革新は2つあります。
+
+\begin{enumerate}
+\item\textbf{並列処理}: RNNのように順次処理せず、シーケンスのすべての位置を同時に処理することができ、GPUの活用度が最大化された。これは学習速度を数十倍向上させた。
+\item\textbf{長距離依存性}：アテンションは、シーケンス内のすべての位置のペア間の直接接続を計算するので、距離が遠いトークン間の関係もうまく捉えられます。 1000語離れた単語でも1回のアテンションで参照可能だ。
+\end{enumerate}
+
+\begin{figure}[htbp]
+\centering
+\begin{tikzpicture}[
+  scale=0.9,
+  every node/.style={font=\small\sffamily},
+  bar/.style={inkblue, fill=inkblue!30},
+  lbl/.style={inkgray, anchor=south, font=\scriptsize\sffamily}
+]
+  % 軸
+  \draw[inkblue, line width=0.5pt, ->] (0, 0) -- (11, 0);
+  \draw[inkblue, line width=0.5pt, ->] (0, 0) -- (0, 5);
+  \node[inkgray, anchor=east] at (-0.2, 4.7) {params};
+  \node[inkgray, anchor=north] at (10.5, -0.2) {year};
+  % 対数スケールバー(おおよその)
+  \foreach \x/\h/\name in {1/0.2/GPT-1, 2.5/1.2/BERT, 4/1.8/GPT-2, 5.5/3.0/T5, 7/4.0/GPT-3, 8.5/4.5/PaLM, 10/4.8/GPT-4} {
+    \draw[bar] (\x-0.3, 0) rectangle (\x+0.3, \h);
+    \node[lbl] at (\x, \h+0.05) {};
+    \node[inkgray, anchor=south, font=\tiny\sffamily, rotate=45] at (\x, 0.05) {\name};
+  }
+\end{tikzpicture}
+\caption{LLM パラメータ数の発展推移(ログスケール, おおよその）. GPT-1（2018）は1.1億個, GPT-4（2023）は推定1.7兆個.}
+\label{fig:llm-scaling}
+\end{figure}
+
+\subsection{GPT シリーズとスケーリング法則(2018  --  現在）}
+
+OpenAIのGPTシリーズは、トランスデコーダ構造を使用して大規模なテキストで事前学習（pre-training）するアプローチを取った。 GPT-1（2018）は1億1,700万パラメータだったが、GPT-2（2019）は15億、GPT-3（2020）は1,750億パラメータで急成長した。この過程でモデルサイズ、データサイズ、演算量を増やすと性能が予測可能に向上するという\keyterm{スケーリング法則（scaling law)}が発見された。
+
+Kaplanら。 （2020）のスケーリング法則は、損失がモデルサイズ$N$、データサイズ$D$、演算量$C$に対して絶対法則に従うことを示しています。
+
+\[
+\mathcal{L}(N, D, C) \approx A \cdot N^{-\alpha\_N} + B \cdot D^{-\alpha\_D} + E \cdot C^{-\alpha\_C} + L\_\infty
+\]
+
+この法則の実用的な示唆は明確です：モデルを育てるためには、データも一緒に育てなければなりません。 100億パラメータモデルを10億トークンで学習すると過適合となる。 Hoffmannら。 （2022）のChinchilla論文は、パラメータ$N$あたり約20個のトークンが理想的であると提案しました。
+
+\subsection{アライメントの登場 (2022  --  現在）}
+
+GPT-3（2020）は1,750億のパラメータで強力だったが、ユーザーの質問に役立つ答えをしなかった。ただ「次のトークン」を予測しただけです。 2022年にChatGPTが革新的だった理由は、モデルサイズではなく\keyterm{ソート（alignment)}にありました。
+
+人間のフィードバックを活用した強化学習（RLHF）がGPT-3を「役に立つチャットボット」に変換したのです。その後、Direct Preference Optimization（DPO）、Constitutional AIなど、よりシンプルで効率的なアライメント技術が登場しました。 2巻8章でこれらの手法を直接実装する。
+
+\section{LLMの主な応用}
+
+LLMはさまざまな分野で活用されています。
+
+\subsection{自然言語処理の伝統的なタスク}
+\begin{itemize}
+\item\textbf{機械翻訳}：Google Translate、DeepLなどがトランスベースです。
+\item\textbf{要約}: 長い文書を短く要約。ニュース、論文、議事録など。
+\item\textbf{感性分析}: テキストの肯定/否定判別。レビュー、ソーシャルメディア分析。
+\item\textbf{オブジェクト名認識}：テキストから人、場所、組織などを抽出します。
+\end{itemize}
+
+\subsection{生成タスク}
+\begin{itemize}
+\item\textbf{会話}: ChatGPT、Claude、Geminiなど。
+\item\textbf{コードを書く}：GitHub Copilot、カーソル。 Python、JavaScriptなどのさまざまな言語。
+\item\textbf{創作}：小説、詩、シナリオ。 AI作家ツール。
+\item\textbf{Eメール/文書の作成}: ビジネスメール、報告書草案。
+\end{itemize}
+
+\subsection{専門分野}
+\begin{itemize}
+\item\textbf{医療}：診断支援、医療記録の要約、患者相談。
+\item\textbf{法律}：判例の検索、契約のレビュー、法的助言。
+\item\textbf{教育}：パーソナライゼーションチューター、問題の作成、課題のスコア。
+\item\textbf{金融}：市場分析、レポート作成、詐欺の検出。
+\end{itemize}
+
+\subsection{マルチモーダル}
+最新のLLMはテキストだけでなく、画像、オーディオ、ビデオも処理します。 GPT-4V、Gemini、Claude 3などは、画像を理解して説明することができます。
+
+\section{なぜ自分で作るのか}
+
+「HuggingFaceからモデルをダウンロードすればいいのですが、なぜあなたは自分で作るのですか？」という質問は正当です。答えは3つです。
+
+\textbf{まず, 理解の深さ}が異なります。\code{model.generate()}を呼び出すことと、その中で何が起こるのかを知ることは、次元が異なる理解だ。自分で作成すれば、デバッグ、最適化、カスタマイジングがすべて可能になる。推論速度が遅いときにどこがボトルネックであるかを診断でき、新しいアーキテクチャを実験する際にどこを修正すべきかを知る。
+
+\textbf{第二, 制御力}が発生します。推論速度を上げたい時、メモリを減らしたい時、新しいアーキテクチャを実験したい時、内部を知る人と知らない人の対応力は空と地差だ。 HuggingFaceモデルをそのまま使って奇妙な出力が出たら？内部を知っている人はどこをデバッグするべきかを知っています。
+
+\textbf{第三, 今後のコントラスト}LLM分野は急速に変わります。新しい論文が毎週注がれるが、それを理解するには基本基がしっかりしなければならない。 RoPE、GQA、SwiGLUのような最新技術も結局アテンション、FFN、正規化の変形だ。この本を通して基本基盤を固めれば、2巻\textit{Make LLM-advanced}で扱う分散学習、量子化、整列といった高度なテーマも自然に吸収できる。
+
+\begin{warnbox}[この本の限界]
+この本は「実際のChatGPTを作成する」ことを目指していません。 1巻で作るモデルは1千万$\sim$1億パラメータレベルの小規模GPTで、品質はGPT-2 small程度だ。しかし、その構造はGPT-3、GPT-4と本質的に同じである。 「サイズ」は2巻で扱われ、「構造と原理」は1巻で扱われます。
+
+なぜ大きなモデルを作らないのですか？ 175Bモデルを学習するには、数百のGPUが数週間必要で、数億ドルの費用がかかる。これは本に従うのは難しいです。代わりに、小さなモデルで原理を学ぶと、大きなモデルも同じ原理であることがわかります。
+\end{warnbox}
+
+\section{この本が作るモデル}
+
+1冊を完読すれば、読者は次のようなモデルを直接作ることになる。
+
+\begin{itemize}
+\item\textbf{アーキテクチャ}：GPTスタイルのトランスデコーダ（6$\sim$12階、8ヘッド、512$\sim$768埋め込み寸法）
+\item\textbf{トークナイザー}: BPE (Byte Pair Encoding) と Unigram の両方を直接実装
+\item\textbf{学習}：AdamW + cosine LRスケジュール+ウォームアップ
+\item\textbf{作成}: Greedy、Top-K、Top-P、Temperature サンプリングすべての実装
+\item\textbf{評価}：クロスエントロピーロスとパープレクティスの計算
+\end{itemize}
+
+2巻\textit{Make LLM-advanced}では、この基盤の上に分散学習（DDP、FSDP、ZeRO）、最新アーキテクチャ（RoPE、GQA、SwiGLU、MoE）、量子化（INT8/INT4/AWQ）、ソート（SFT、RLHF、DPO、LoRA）、推論最適化（KV cache、PagedAttention）を追加。
+
+\section{学習ロードマップ}
+
+\begin{figure}[htbp]
+\centering
+\begin{tikzpicture}[
+  every node/.style={font=\small\sffamily},
+  box/.style={draw=inkblue, fill=inkblue!8, rounded corners=2pt, minimum width=3cm, minimum height=0.8cm, align=center},
+  arr/.style={-{Stealth[length=4pt]}, inkblue!70, thick}
+]
+  \node[box] (ch1) at (0, 0) {第1章\\導入};
+  \node[box] (ch2) at (3.5, 0) {第2章\\環境設定};
+  \node[box] (ch3) at (7, 0) {第3章\\トークナイザー};
+  \node[box] (ch4) at (10.5, 0) {第4章\\埋め込み};
+  \node[box] (ch5) at (0, -1.8) {第5章\\アテンション};
+  \node[box] (ch6) at (3.5, -1.8) {第6章\\トランスフォーマー};
+  \node[box] (ch7) at (7, -1.8) {第7章\\ GPT学習};
+  \node[box] (ch8) at (10.5, -1.8) {第8章\\作成};
+  \node[box, fill=inkred!10, draw=inkred] (ch9) at (5.25, -3.6) {第9章\\整理};
+
+  \draw[arr] (ch1) -- (ch2);
+  \draw[arr] (ch2) -- (ch3);
+  \draw[arr] (ch3) -- (ch4);
+  \draw[arr] (ch4) -- (ch5);
+  \draw[arr] (ch5) -- (ch6);
+  \draw[arr] (ch6) -- (ch7);
+  \draw[arr] (ch7) -- (ch8);
+  \draw[arr] (ch8) -- (ch9);
+\end{tikzpicture}
+\caption{1巻学習ロードマップ. 各章は前の章のモジュールです importで使用.}
+\label{fig:learning-roadmap}
+\end{figure}
+
+\section{要約}
+
+\begin{itemize}
+\item 言語モデルは、テキストシーケンスに確率を割り当てるモデルであり、次のトークン予測が重要な目標です。
+\item N-gramでRNN/LSTMを経て、2017年にトランスフォーマーが登場し、LLM時代が開かれた。
+\item スケーリング法則に基づいてモデル、データ、演算を増やすと、パフォーマンスが予測可能に向上します。
+\item 2022年以降、ソート（RLHF / DPO）は「シンプルLM」を「役に立つチャットボット」に変換しました。
+\item 自分で作れば理解の深さ、制御力、未来対比能力が全て確保される。
+\item 1巻では小規模GPTを、2巻ではChatGPTレベルの技法を扱う。
+\end{itemize}
+
+\section{練習問題}
+
+\begin{enumerate}
+\item ChatGPT、Claude、Geminiのいずれかを使用して、次の質問に答えてください。 「言語モデルが次のトークンを予測するように学習されている場合は、どのように質問に答えることができますか？」モデル의答えを評価してください。
+\item 次の文の次の単語の確率を人ならば、どのように結ぶかを考えてください：「太陽は東から…」。 「湧き出る」は99％以上です。なぜこの確率が高いのですか？
+\item Nグラムモデル의限界のうち、「スパース性の問題」を説明してください。未学習の3グラム「ホッキョクグマが踊る」次の単語をNグラムはどのように予測するのですか？
+\item トランスがRNNよりも並列処理に有利である理由を説明してください。
+\item スケーリング法則によれば、モデルを10倍増やすと、データはどれくらい増えるべきですか？ (Chinchilla基準)
+\end{enumerate}
+
+次の章では、本格的な実装のためにPython、PyTorch、そしてこの本のコードストアを設定します。

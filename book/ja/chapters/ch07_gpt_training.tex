@@ -1,0 +1,395 @@
+\chapter{GPT モデルの完成と学習ループ}
+\label{ch:gpt_training}
+
+この章では、6つのトランスブロックを$N$層積み上げて完全な\keyterm{GPT モデル}を作成し、このモデルを学習するループを構築します。データセット、損失関数、オプティマイザ、スケジューラをすべて直接実装します。
+
+\section{GPT モデル構造}
+
+GPTはトランスデコーダを$N$層積み重ねた自己回帰言語モデルです。全体の構造は次のとおりです。
+
+\begin{enumerate}
+\item トークンID$\to$[Token + Position Embedding]
+  \item [Transformer Block] $\times N$
+  \item [Final LayerNorm]
+  \item [LM Head: $d\_{model} \to V$]
+  \item logits
+\end{enumerate}
+
+\begin{figure}[htbp]
+\centering
+\begin{tikzpicture}[
+  every node/.style={font=\small\sffamily},
+  box/.style={draw=inkblue, fill=inkblue!8, rounded corners=2pt, minimum width=4cm, minimum height=0.7cm},
+  rep/.style={draw=inkgray, fill=inkgray!10, rounded corners=2pt, minimum width=4cm, minimum height=0.7cm, dashed}
+]
+  \node[box] (in) at (0, 0) {token IDs [batch, seq]};
+  \node[box, below=0.4cm of in] (emb) {Embedding (token + position)};
+  \node[rep, below=0.4cm of emb] (blk) {Transformer Block $\times N$};
+  \node[box, below=0.4cm of blk] (ln) {Final LayerNorm};
+  \node[box, below=0.4cm of ln] (head) {LM Head ($d\_{model} \to V$)};
+  \node[box, below=0.4cm of head] (out) {logits [batch, seq, V]};
+
+  \draw[-{Stealth[length=4pt]}, inkblue] (in) -- (emb);
+  \draw[-{Stealth[length=4pt]}, inkblue] (emb) -- (blk);
+  \draw[-{Stealth[length=4pt]}, inkblue] (blk) -- (ln);
+  \draw[-{Stealth[length=4pt]}, inkblue] (ln) -- (head);
+  \draw[-{Stealth[length=4pt]}, inkblue] (head) -- (out);
+
+  % weight tying 表示
+  \draw[inkred, dashed, <->] (emb.east) to[bend left=30] node[right, inkred, font=\scriptsize] {weight tying} (head.east);
+\end{tikzpicture}
+\caption{GPT モデル構造. 埋め込みの重みと LM Head 重みを共有する（weight tying）によるパラメータの節約.}
+\label{fig:gpt}
+\end{figure}
+
+\section{ウェイトタイ（Weight Tying)}
+
+埋め込み行列$E$（$V \times d\_{model}$）とLM Head行列$W\_{out}$（$d\_{model} \times V$）には事実のような情報が含まれています。トークン$i$の埋め込みは$E[i]$であり、ロジットの計算に$W\_{out}^T[i]$が使用されます。 2つを共有すると、パラメータの数を$V \times d\_{model}$だけ節約できます。
+
+\begin{lstlisting}[language=Python]
+class GPT(nn.Module):
+    def __init__(self, config: ModelConfig):
+        super().__init__()
+        self.config = config
+        self.embedding = EmbeddingStack(
+            vocab_size=config.vocab_size,
+            d_model=config.d_model,
+            max_len=config.context_length,
+            pad_id=config.pad_token_id,
+        )
+        self.blocks = nn.ModuleList([
+            TransformerBlock(config, layer_norm_style="pre")
+            for _ in range(config.n_layers)
+        ])
+        self.ln_f = nn.LayerNorm(config.d_model, eps=config.layer_norm_eps)
+        self.lm_head = nn.Linear(config.d_model, config.vocab_size, bias=False)
+        # ウェイトタイ
+        self.lm_head.weight = self.embedding.token_emb.embedding.weight
+\end{lstlisting}
+
+\begin{notebox}[重みタイの長所と短所]
+\textbf{利点}: パラメータの節約(GPT-2小基準で約3分の1減少)、埋め込みと出力の一貫性.
+
+\textbf{欠点}：埋め込みが出力レイヤーのグラデーションも受け取り、学習がより複雑になります。一部のモデル（LLaMAなど）はタイを使わずに別途学習。
+
+GPT-2、GPT-3はタイ使用。 LLaMA、Mistralは未使用。この本では、GPTスタイルに沿ってタイを使用します。
+\end{notebox}
+
+\section{Forward Pass}
+
+\begin{lstlisting}[language=Python]
+    def forward(self, token_ids, return_hidden=False):
+        batch, seq = token_ids.shape
+        # 因果マスクの作成
+        mask = make_causal_mask(seq, device=token_ids.device)
+        # 埋め込み
+        x = self.embedding(token_ids)
+        # トランスフォーマブロック通過
+        for block in self.blocks:
+            x = block(x, mask=mask)
+        # 最終正規化(Pre-LNだから最後に必要）
+        x = self.ln_f(x)
+        # ロジット
+        logits = self.lm_head(x)
+        if return_hidden:
+            return logits, x
+        return logits
+\end{lstlisting}
+
+\begin{infobox}[なぜ最後にLayerNormが必要なのですか？]
+Pre-LNブロックは各ブロックの入力を正規化します。しかし、最後のブロックの出力は、正規化されていない状態で残差ストリームに追加されます。これをLMヘッドに入れる前に正規化しなければ出力分布が安定している。だから\code{ln\_f}（final LayerNorm）が必要です。
+
+Post-LNでは、各ブロック出力はすでに正規化されているため、\code{ln\_f}は不要です。
+\end{infobox}
+
+\section{データセット: スライドウィンドウ}
+
+言語モデリングデータセットはテキストをトークン化した後、固定長チャンクに分割します。各チャンクでは、inputは最初の$L-1$トークン、targetは最後の$L-1$トークン（一行シフト）。
+
+\begin{lstlisting}[language=Python]
+class LMDataset(Dataset):
+    def __init__(self, text, tokenizer, context_length=128,
+                 add_bos=True, add_eos=True):
+        self.context_length = context_length
+        # テキストをトークン化して長いシーケンスに
+        if isinstance(text, str):
+            text = [text]
+        all_ids = []
+        for t in text:
+            ids = tokenizer.encode(t, add_bos=add_bos, add_eos=add_eos)
+            all_ids.extend(ids)
+        self._ids = all_ids
+        # context_length+1サイズチャンクに分割
+        cl = context_length + 1
+        self._chunks = []
+        for i in range(0, len(all_ids), cl):
+            chunk = all_ids[i:i+cl]
+            if len(chunk) < cl:
+                chunk = chunk + [tokenizer.special.pad_id] * (cl - len(chunk))
+            self._chunks.append(chunk)
+
+    def __getitem__(self, idx):
+        chunk = self._chunks[idx]
+        input_ids = torch.tensor(chunk[:-1], dtype=torch.long)
+        target_ids = torch.tensor(chunk[1:], dtype=torch.long)
+        return input_ids, target_ids
+\end{lstlisting}
+
+\begin{figure}[htbp]
+\centering
+\begin{tikzpicture}[
+  every node/.style={font=\small\sffamily},
+  tok/.style={draw=inkblue, fill=inkblue!15, minimum width=0.5cm, minimum height=0.5cm},
+  dstin/.style={draw=inkblue, fill=inkblue!30, minimum width=0.5cm, minimum height=0.5cm},
+  tgt/.style={draw=inkred, fill=inkred!30, minimum width=0.5cm, minimum height=0.5cm}
+]
+  % シーケンス
+  \node[inkgray, anchor=east] at (-0.3, 0) {tokens:};
+  \foreach \i/\t in {0/B, 1/t, 2/h, 3/e, 4/c, 5/a, 6/t, 7/E} {
+    \node[tok] at (\i*0.55, 0) {\t};
+  }
+
+  \node[inkgray, anchor=east] at (-0.3, -0.8) {input:};
+  \foreach \i/\t in {0/B, 1/t, 2/h, 3/e, 4/c, 5/a, 6/t} {
+    \node[dstin] at (\i*0.55, -0.8) {\t};
+  }
+
+  \node[inkgray, anchor=east] at (-0.3, -1.6) {target:};
+  \foreach \i/\t in {0/t, 1/h, 2/e, 3/c, 4/a, 5/t, 6/E} {
+    \node[tgt] at (\i*0.55, -1.6) {\t};
+  }
+
+  % 矢印
+  \foreach \i in {0, 1, 2, 3, 4, 5, 6} {
+    \draw[-{Stealth[length=3pt]}, inkgray!50] (\i*0.55, -0.3) -- (\i*0.55, -0.55);
+  }
+
+  \node[inkgray, font=\scriptsize, anchor=west] at (5, -0.8) {input は target より 1 マス前};
+  \node[inkgray, font=\scriptsize, anchor=west] at (5, -1.6) {B=<bos>, E=<eos>};
+\end{tikzpicture}
+\caption{スライドウィンドウデータセット. inputと target銀のようなシーケンス shift一. モデルは inputを見て targetを予測.}
+\label{fig:sliding-window}
+\end{figure}
+
+\section{損失関数: Cross-Entropy}
+
+言語モデルの損失は\keyterm{クロスエントロピー（cross-entropy)}です。モデルが予測した確率分布と正解（ワンホット）の差を測定します。
+
+\begin{formula}[Cross-Entropy Loss]
+\[
+\mathcal{L} = -\frac{1}{N} \sum\_{i=1}^{N} \log P(y\_i \mid x\_{<i})
+\]
+$y\_i$は正解トークン、$P$はモデルの予測確率です。低いほど良いです。
+\end{formula}
+
+\begin{lstlisting}[language=Python]
+def cross_entropy_loss(logits, targets, ignore_index=-100):
+    # logits: [batch, seq, V], targets: [batch, seq]
+    batch, seq, vocab = logits.shape
+    logits_flat = logits.view(-1, vocab)
+    targets_flat = targets.view(-1)
+    return F.cross_entropy(logits_flat, targets_flat, ignore_index=ignore_index)
+\end{lstlisting}
+
+\subsection{Label Smoothing (選択)}
+
+正解に100\%確信する代わりに、多少の不確実性を許容して一般化性能を高める技法。
+
+\begin{lstlisting}[language=Python]
+def label_smoothing_loss(logits, targets, smoothing=0.1, ignore_index=-100):
+    """正解トークンに1-smoothing 確率, 残り smoothing/vocab 確率."""
+    log_probs = F.log_softmax(logits.view(-1, logits.size(-1)), dim=-1)
+    targets_flat = targets.view(-1)
+    nll_loss = -log_probs.gather(1, targets_flat.clamp(min=0).unsqueeze(1)).squeeze(1)
+    smooth_loss = -log_probs.mean(dim=-1)
+    mask = (targets_flat != ignore_index).float()
+    nll_loss = (nll_loss * mask).sum() / mask.sum().clamp(min=1)
+    smooth_loss = (smooth_loss * mask).sum() / mask.sum().clamp(min=1)
+    return (1.0 - smoothing) * nll_loss + smoothing * smooth_loss
+\end{lstlisting}
+
+\section{オプティマイザー: AdamW}
+
+\keyterm{AdamW}はAdamにweight decayを組み合わせた最適化アルゴリズムです。コアはバイアスとLayerNormにはweight decayを適用しないこと。
+
+\begin{lstlisting}[language=Python]
+def build_optimizer(model, config):
+    # パラメータグループの分離: decay / no_decay
+    decay, no_decay = [], []
+    for name, p in model.named_parameters():
+        if not p.requires_grad: continue
+        if p.ndim < 2 or "bias" in name or "ln" in name.lower():
+            no_decay.append(p)
+        else:
+            decay.append(p)
+    return AdamW(
+        [{"params": decay, "weight_decay": config.weight_decay},
+         {"params": no_decay, "weight_decay": 0.0}],
+        lr=config.learning_rate, betas=(0.9, 0.95)
+    )
+\end{lstlisting}
+
+\begin{notebox}[なぜバイアスとLayerNormはweight decayから減算するのですか？]
+Weight decayは重みをゼロに引き付ける正規化だ。行列の重みには過適合防止効果があるが、バイアスとLayerNormの$\gamma, \beta$は次元が低く、weight decayの効果が微小であるのではなく学習を妨げる可能性がある。 PyTorchコミュニティの標準的な慣行です。
+\end{notebox}
+
+\section{学習率スケジューラ}
+
+学習の初期には、学習率を徐々に上げ(warmup)、その後コサイン曲線に減少させる。この\keyterm{warmup + cosine}スケジュールはGPT-3で標準として使用されます。
+
+\begin{lstlisting}[language=Python]
+def build_scheduler(optimizer, config, total_steps):
+    warmup = config.warmup_steps
+    def lr_lambda(step):
+        if step < warmup:
+            return float(step) / max(1, warmup)
+        progress = (step - warmup) / max(1, total_steps - warmup)
+        if config.lr_scheduler == "cosine":
+            return 0.5 * (1.0 + math.cos(math.pi * min(progress, 1.0)))
+        return 1.0
+    return LambdaLR(optimizer, lr_lambda)
+\end{lstlisting}
+
+\begin{figure}[htbp]
+\centering
+\begin{tikzpicture}[
+  scale=0.9,
+  every node/.style={font=\small\sffamily}
+]
+  % 軸
+  \draw[inkblue, line width=0.5pt, ->] (0, 0) -- (11, 0) node[right] {step};
+  \draw[inkblue, line width=0.5pt, ->] (0, 0) -- (0, 3.5) node[above] {LR};
+  % ウォームアップ区間（線形増加）
+  \draw[inkred, line width=1pt] (0, 0) -- (2, 2.5);
+  \node[inkred, font=\scriptsize, anchor=south] at (1, 2.6) {warmup};
+  % cosine 区間
+  \draw[inkblue, line width=1pt, domain=2:10, samples=50] plot (\x, {2.5*0.5*(1+cos(180*(\x-2)/8))});
+  \node[inkblue, font=\scriptsize, anchor=south] at (6, 2.6) {cosine decay};
+  % 最大LR表示
+  \draw[inkgray, dashed] (0, 2.5) -- (2, 2.5);
+  \node[inkgray, font=\scriptsize, anchor=east] at (-0.1, 2.5) {$lr\_{max}$};
+\end{tikzpicture}
+\caption{Warmup + Cosine 学習率スケジュール. 最初は線形に上げます。, その後、コサイン曲線に減少.}
+\label{fig:lr-schedule}
+\end{figure}
+
+\subsection{なぜ warmupこれが必要ですか?}
+
+学習初期には重みがランダムに近い。大きな学習率をすぐに適用すれば、グラデーションが不安定で発散することができる。小さな学習率から始めて徐々に上げると、モデルは安定した領域に入ります。
+
+特にアテンションの初期グラデーションは非常に大きくなることがあります（softmax飽和など）、warmupがこれを緩和する。 Pre-LN構造はPost-LNよりもウォームアップに敏感ではありませんが、それでも使用するのは安全です。
+
+\section{グラデーションクリッピング}
+
+グラデーションが大きすぎて重みが大きく変化するのを防ぐために、グラデーションnormを制限します。
+
+\begin{lstlisting}[language=Python]
+if config.grad_clip > 0:
+    torch.nn.utils.clip_grad_norm_(model.parameters(), config.grad_clip)
+\end{lstlisting}
+
+通常\code{grad\_clip = 1.0}を使用してください。グラデーションノームが1.0を超える場合は1.0にスケーリングします。
+
+\section{トレーナー}
+
+すべてのコンポーネントをまとめて学習ループを作成します。
+
+\begin{lstlisting}[language=Python]
+class Trainer:
+    def __init__(self, model, train_dataset, config, model_config, eval_dataset=None):
+        self.model = model
+        self.config = config
+        self.device = torch.device(config.device)
+        self.model.to(self.device)
+        self.train_loader = DataLoader(train_dataset, batch_size=config.batch_size,
+                                       shuffle=True, collate_fn=collate_batch)
+        # 総ステップ数の計算
+        total_steps = len(train_dataset) // config.batch_size * config.max_epochs
+        self.optimizer = build_optimizer(model, config)
+        self.scheduler = build_scheduler(self.optimizer, config, total_steps)
+        # ...
+
+    def train(self):
+        self.model.train()
+        for inputs, targets in self.train_loader:
+            inputs, targets = inputs.to(self.device), targets.to(self.device)
+            logits = self.model(inputs)
+            loss = cross_entropy_loss(logits, targets,
+                                       ignore_index=self.model_config.pad_token_id)
+            self.optimizer.zero_grad(set_to_none=True)
+            loss.backward()
+            if self.config.grad_clip > 0:
+                torch.nn.utils.clip_grad_norm_(self.model.parameters(),
+                                                self.config.grad_clip)
+            self.optimizer.step()
+            self.scheduler.step()
+\end{lstlisting}
+
+\section{Perplexity}
+
+\keyterm{パープレクサティ（Perplexity, PPL)}は言語モデルの代表的な評価指標です。
+
+\begin{formula}[Perplexity]
+\[
+\text{PPL} = \exp\left(\frac{1}{N}\sum\_i \log P(y\_i | x\_{<i})\right) = \exp(\text{loss})
+\]
+PPLは、モデルが次のトークンを予測するときに「平均的にいくつかの候補に迷うか」を示します。 PPL=1なら完璧、PPL=10なら10個候補に絞ることができるという意味。
+\end{formula}
+
+\begin{infobox}[PPLの解釈]
+\begin{itemize}
+\item PPL = 1: モデルは次のトークンを 100\% 確信しています。理論的最小。
+\item PPL = 10: 10 個のトークンのいずれかに絞り込みます。言語モデルとして使えるレベル。
+\item PPL = 100: 100 個のトークンのいずれか。ほぼランダム。
+\item PPL =$V$（語彙サイズ）：完全にランダム。学習しない。
+\end{itemize}
+GPT-2 smallのWikiText-103 PPLは約17。GPT-3 175Bは約11。
+\end{infobox}
+
+\section{チェックポイントを保存/ロード}
+
+学習中にモデルの重みを定期的に保存し、中断後に再開したり、推論に使用したりできます。
+
+\begin{lstlisting}[language=Python]
+def save_checkpoint(self, filename):
+    path = self.out_dir / filename
+    torch.save({
+        "model_state": self.model.state_dict(),
+        "optimizer_state": self.optimizer.state_dict(),
+        "scheduler_state": self.scheduler.state_dict(),
+        "global_step": self.global_step,
+        "model_config": self.model_config.to_dict(),
+        "trainer_config": self.config.to_dict(),
+    }, path)
+
+def load_checkpoint(self, path):
+    ckpt = torch.load(path, map_location=self.device)
+    self.model.load_state_dict(ckpt["model_state"])
+    self.optimizer.load_state_dict(ckpt["optimizer_state"])
+    self.scheduler.load_state_dict(ckpt["scheduler_state"])
+    self.global_step = ckpt["global_step"]
+\end{lstlisting}
+
+\section{要約}
+
+\begin{itemize}
+  \item GPT = Embedding + Transformer Block $\times N$ + LayerNorm + LM Head.
+\item 重みタイロ埋め込みとLMヘッド重みを共有することでパラメータを節約します。
+\item Pre-LN構造では、最後に\code{ln\_f}が必要です。
+\item 言語モデリングは、スライドウィンドウで（input、target）ペアを生成します。
+\item 損失はcross-entropy、オプティマイザはAdamW（bias/LayerNormはweight decayを除く）。
+\item Warmup + Cosine 学習率スケジュール + グラデーションクリッピングが標準。
+\item Perplexity =$\exp(\text{loss})$によるモデル品質評価。
+\end{itemize}
+
+\section{練習問題}
+
+\begin{enumerate}
+\item ウェイトタイを使用しないと、GPT-2 small（V = 50257、d = 768）でパラメータがどれだけ増加しますか？
+\item Warmupステップ数を0にすると学習がどのように変わりますか？
+\item Label smoothingを0.3に強く適用すると、どのような効果がありますか？
+\item グラデーションクリッピングなしで学習するとどのような現象が発生する可能性がありますか？
+\item PPLが1.0のモデルが実際に存在する可能性がありますか？なぜですか？
+\end{enumerate}
+
+次の章では、学習したモデルでテキストを生成する方法について説明します。 Greedy、Top-K、Top-Pのサンプリングすべてを実装します。

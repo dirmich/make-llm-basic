@@ -1,0 +1,482 @@
+\chapter{Creating a tokenizer}
+\label{ch:tokenizer}
+
+In this chapter, we directly implement\keyterm{Tokenizer (tokenizer)}, which converts text to a sequence of numbers. It covers two major algorithms, BPE (Byte Pair Encoding) and Unigram, and examines each learning, encoding, and decoding process through code.
+
+\section{Why do you need a tokenizer?}
+
+Neural networks only understand numbers. The string ``Hello, world!'' cannot be directly entered into the model. The first step is to convert the text into a sequence of integers, which is handled by\keyterm{tokenizer}. The simplest method is a ``per-character tokenizer,'' which treats every character as a separate token. However, this makes the sequence too long and it is difficult to get the meaning of the words.
+
+The opposite extreme is a ``word-level tokenizer,'' which treats words separated by spaces as a single token. However, it has an exploding vocabulary size (hundreds of thousands of words in English alone) and cannot handle untrained words (out-of-vocabulary, OOV).
+
+Modern LLMs use the\keyterm{Subword (subword)}tokenizer, which is somewhere between these two extremes. Words that appear frequently are divided into one token, and rare words are divided into smaller subwords. ``unhappiness'' can be broken down into ``un'' + ``happiness'' or ``un'' + ``happi'' + ``ness''. This method solves the OOV problem while maintaining an appropriate vocabulary size.
+
+\subsection{Comparison of three approaches}
+
+\begin{center}
+\begin{tabularx}{\textwidth}{lXXX}
+\toprule
+\textbf{method}&\textbf{vocabulary size}&\textbf{OOV treatment}&\textbf{sequence length}\\
+\midrule
+Character unit & small ($\sim$100) & none & very long \\
+Word units & very large ($\sim$100K) & not processed & short \\
+Subword & Middle ($\sim$10K$\sim$50K) & Decomposition into partial words & Middle \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+\section{special token}
+
+Every tokenizer has some\keyterm{Special token (special token)}. Our implementation uses four:
+
+\begin{center}
+\begin{tabularx}{\textwidth}{llX}
+\toprule
+\textbf{token}&\textbf{ID}&\textbf{use}\\
+\midrule
+\code{<pad>}& 0 & Padding to match sequence length within batch \\
+\code{<bos>}& 1 & Indicates the beginning of sequence (Beginning Of Sequence) \\
+\code{<eos>}& 2 & Marks the end of the sequence (End Of Sequence) \\
+\code{<unk>}& 3 & Token not in vocabulary (Unknown) \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+These tokens have fixed indices, so they can be treated specially by the model. For example, if\code{<eos>}is encountered during creation, inference stops, and the\code{<pad>}position is ignored in the loss calculation.
+
+\begin{warnbox}[Reason for fixing special token ID]
+Fixing the ID of the special token to 0$\sim$3 simplifies the model code. Hard coding such as ``\code{if token\_id == 0: mask\_out}'' is possible. Additionally, checkpoint compatibility is guaranteed: even if the tokenizer is retrained, the special token ID is always the same, so model weights can be reused as is.
+\end{warnbox}
+
+\section{base class}
+
+The interface that all tokenizers must follow is defined as an abstract class.
+
+\begin{lstlisting}[language=Python]
+from abc import ABC, abstractmethod
+from dataclasses import dataclass
+
+@dataclass
+class SpecialTokens:
+    pad: str = "<pad>"   # ID 0
+    bos: str = "<bos>"   # ID 1
+    eos: str = "<eos>"   # ID 2
+    unk: str = "<unk>"   # ID 3
+
+    @property
+    def tokens(self) -> list[str]:
+        return [self.pad, self.bos, self.eos, self.unk]
+
+    @property
+    def pad_id(self) -> int: return 0
+    @property
+    def bos_id(self) -> int: return 1
+    @property
+    def eos_id(self) -> int: return 2
+    @property
+    def unk_id(self) -> int: return 3
+
+
+class Tokenizer(ABC):
+    def __init__(self, special_tokens: SpecialTokens | None = None):
+        self.special = special_tokens or SpecialTokens()
+        self.id_to_token: list[str] = list(self.special.tokens)
+        self.token_to_id: dict[str, int] = {t: i for i, t in enumerate(self.id_to_token)}
+
+    @abstractmethod
+    def _train(self, corpus: list[str], vocab_size: int) -> None:
+        """Vocabulary learning (implemented in child class)"""
+
+    @abstractmethod
+    def _tokenize(self, text: str) -> list[str]:
+        """Split text into list of tokens (implemented in child class)"""
+
+    def encode(self, text: str, add_bos=False, add_eos=False) -> list[int]:
+        tokens = self._tokenize(text)
+        ids = [self.token_to_id.get(t, self.special.unk_id) for t in tokens]
+        if add_bos: ids = [self.special.bos_id] + ids
+        if add_eos: ids = ids + [self.special.eos_id]
+        return ids
+
+    def decode(self, ids: list[int]) -> str:
+        tokens = [self.id_to_token[i] for i in ids
+                  if self.id_to_token[i] not in self.special.tokens]
+        raw = self._tokens_to_bytes(tokens)
+        return self._postprocess(raw.decode("utf-8", errors="replace"))
+\end{lstlisting}
+
+\begin{infobox}[Role of abstract class]
+\code{Tokenizer}defines an ``interface''. Child classes (BPE, Unigram) must implement\code{\_train}and\code{\_tokenize}. In this way, even if the learning algorithm is different, the\code{encode/decode}API remains the same, so the upper code (dataset, trainer) operates regardless of the type of tokenizer.
+
+This is the value of ``polymorphism''. The trainer only needs to call\code{tokenizer.encode(text)}, and it doesn't care whether BPE or Unigram is running internally. If you later add new algorithms such as ``SentencePiece'' or ``WordPiece'', the trainer code does not need to be modified.
+\end{infobox}
+
+\section{BPE tokenizer}
+
+\keyterm{BPE(Byte Pair Encoding)}is an algorithm proposed for data compression in 1994 that was introduced to neural network machine translation by Sennrich et al. in 2016. Used by GPT-2, GPT-3, LLaMA, etc.
+
+\subsection{Algorithm Intuition}
+
+The core idea of ​​BPE is simple:
+\begin{enumerate}
+\item Decomposes text into bytes (any character can be represented, no OOV).
+\item Finds the most frequently occurring pair of adjacent byte pairs.
+\item Merge the pair into a new token.
+\item Repeat 2$\sim$3 until the target vocabulary size is reached.
+\end{enumerate}
+
+Initially, all text is a ``sequence of bytes''. For example, ``lower'' is expressed as\code{[l, o, w, e, r]}. As you progress:
+\begin{itemize}
+\item Merge if ``lo'' appears frequently:\code{[lo, w, e, r]}
+\item Merge if ``er'' appears frequently:\code{[lo, w, er]}
+\item Merge if ``low'' appears frequently:\code{[low, er]}
+\item Merge if ``lower'' appears frequently:\code{[lower]}
+\end{itemize}
+
+Ultimately, ``lower'' becomes a token, but the rare word remains a subword. ``lowering'' can be ``lower'' + ``ing''.
+
+\begin{figure}[htbp]
+\centering
+\begin{tikzpicture}[
+  every node/.style={font=\small\sffamily},
+  byte/.style={draw=inkblue, fill=inkblue!8, minimum width=0.8cm, minimum height=0.6cm, rounded corners=2pt},
+  merge/.style={draw=inkred, fill=inkred!10, minimum width=1.6cm, minimum height=0.6cm, rounded corners=2pt},
+  arr/.style={-{Stealth[length=4pt]}, inkgray}
+]
+  \node[byte] (a1) at (0, 0) {l};
+  \node[byte, right=0.1cm of a1] (a2) {o};
+  \node[byte, right=0.1cm of a2] (a3) {w};
+  \node[byte, right=0.1cm of a3] (a4) {e};
+  \node[byte, right=0.1cm of a4] (a5) {r};
+  \node[inkgray, anchor=west, font=\scriptsize] at (5.5, 0) {step 0: bytes};
+
+  \node[merge] (b1) at (0, -1) {lo};
+  \node[byte, right=0.1cm of b1] (b2) {w};
+  \node[byte, right=0.1cm of b2] (b3) {e};
+  \node[byte, right=0.1cm of b3] (b4) {r};
+  \node[inkgray, anchor=west, font=\scriptsize] at (5.5, -1) {step 1: merge 'l'+'o'};
+
+  \node[merge] (c1) at (0, -2) {low};
+  \node[byte, right=0.1cm of c1] (c2) {e};
+  \node[byte, right=0.1cm of c2] (c3) {r};
+  \node[inkgray, anchor=west, font=\scriptsize] at (5.5, -2) {step 2: merge 'lo'+'w'};
+
+  \node[merge] (d1) at (0, -3) {low};
+  \node[merge, right=0.1cm of d1] (d2) {er};
+  \node[inkgray, anchor=west, font=\scriptsize] at (5.5, -3) {step 3: merge 'e'+'r'};
+
+  \node[merge, fill=inkblue!20, draw=inkblue, line width=0.8pt] (e1) at (0, -4) {lower};
+  \node[inkgray, anchor=west, font=\scriptsize] at (5.5, -4) {step 4: merge 'low'+'er'};
+
+  \foreach \y in {0, -1, -2, -3} {
+    \draw[arr] (\y+0.05, \y+0.3) -- (\y+0.05, \y+0.7);
+  }
+\end{tikzpicture}
+\caption{BPE learning process. ``lower''The process of starting from bytes and gradually merging them into one token..}
+\label{fig:bpe-process}
+\end{figure}
+
+\subsection{Why Byte Unit??}
+
+Starting with GPT-2, BPE operates on a ``byte-by-byte'' basis. Previously we used character units, but there was a problem:
+\begin{itemize}
+\item Characters that are not in the vocabulary, such as emojis and rare Chinese characters, are processed as\code{<unk>}.
+\item Character sets become too large in multilingual corpora.
+\end{itemize}
+
+In byte units, all UTF-8 characters can be expressed in 1$\sim$4 bytes, and the ``byte'' part of the vocabulary is always fixed at 256. OOV virtually disappears.
+
+\subsection{avatar: learning}
+
+\begin{lstlisting}[language=Python]
+from collections import Counter
+from .base import Tokenizer
+
+class BPETokenizer(Tokenizer):
+    def __init__(self, special_tokens=None):
+        super().__init__(special_tokens=special_tokens)
+        self.merges: list[tuple[str, str]] = []
+        self._merge_rank: dict[tuple[str, str], int] = {}
+
+    def _train(self, corpus: list[str], vocab_size: int) -> None:
+        # 1. special token + Construct an initial vocabulary of 256 bytes
+        self.id_to_token = list(self.special.tokens)
+        for b in range(256):
+            self.id_to_token.append(chr(b))
+        self.token_to_id = {t: i for i, t in enumerate(self.id_to_token)}
+
+        # 2. Split the corpus into words
+        word_freqs = Counter()
+        for text in corpus:
+            for word in self._pre_tokenize(text):
+                word_freqs[word] += 1
+
+        # 3. Convert each word to a list of byte tokens
+        word_to_tokens = {
+            w: [chr(b) for b in w.encode("utf-8")]
+            for w in word_freqs
+        }
+
+        # 4. merge loop
+        self.merges = []
+        target = vocab_size - len(self.id_to_token)
+        for _ in range(max(target, 0)):
+            pair_freqs = Counter()
+            for word, freq in word_freqs.items():
+                toks = word_to_tokens[word]
+                for i in range(len(toks) - 1):
+                    pair_freqs[(toks[i], toks[i+1])] += freq
+            if not pair_freqs:
+                break
+            best = max(pair_freqs.items(), key=lambda x: (x[1], x[0]))
+            if best[1] < 2:
+                break
+            new_token = best[0][0] + best[0][1]
+            self.merges.append(best[0])
+            self.id_to_token.append(new_token)
+            self.token_to_id[new_token] = len(self.id_to_token) - 1
+            for word in word_to_tokens:
+                word_to_tokens[word] = self._merge_in_list(
+                    word_to_tokens[word], best[0], new_token
+                )
+
+        self._merge_rank = {p: i for i, p in enumerate(self.merges)}
+\end{lstlisting}
+
+\begin{notebox}[Merge priority stability]
+The reason for sorting from\code{max(pair\_freqs.items(), key=lambda x: (x[1], x[0]))}to\code{(x[1], x[0])}tuples is because of tie processing. When there are multiple pairs with the same frequency, the oldest pair in alphabetical order is selected to make the result deterministic. This way, if you learn with the same corpus, you will always get the same merging order.
+\end{notebox}
+
+\subsection{encoding}
+
+To apply learned merging rules to new text, apply the merge with the highest priority (learned first) first.
+
+\begin{lstlisting}[language=Python]
+    def _tokenize(self, text: str) -> list[str]:
+        tokens = []
+        for word in self._pre_tokenize(text):
+            bs = word.encode("utf-8")
+            word_tokens = [chr(b) for b in bs]
+            word_tokens = self._apply_merges(word_tokens)
+            tokens.extend(word_tokens)
+        return tokens
+
+    def _apply_merges(self, tokens: list[str]) -> list[str]:
+        """Apply learned merge rules in priority order."""
+        while len(tokens) >= 2:
+            # most rankFind low (high priority) pairs
+            best_idx, best_rank = -1, len(self.merges) + 1
+            for i in range(len(tokens) - 1):
+                rank = self._merge_rank.get((tokens[i], tokens[i+1]), -1)
+                if 0 <= rank < best_rank:
+                    best_rank, best_idx = rank, i
+            if best_idx < 0:
+                break
+            merged = tokens[best_idx] + tokens[best_idx + 1]
+            tokens = tokens[:best_idx] + [merged] + tokens[best_idx + 2:]
+        return tokens
+\end{lstlisting}
+
+\subsection{Preprocessing: White space processing}
+
+BPE requires special handling of whitespace to preserve word boundaries. GPT-2 replaces spaces with the special character Ġ (U+0120). We replace it with U+2581( ) following the SentencePiece method.
+
+\begin{lstlisting}[language=Python]
+    def _pre_tokenize(self, text: str) -> list[str]:
+        text = text.replace(" ", "▁")
+        text = text.replace("\n", "▁").replace("\t", "▁")
+        while "▁▁" in text:
+            text = text.replace("▁▁", "▁")
+        if not text.startswith("▁"):
+            text = "▁" + text
+        parts = text.split("▁")
+        return ["▁" + p for i, p in enumerate(parts) if i > 0 and p]
+\end{lstlisting}
+
+\begin{warnbox}[Trap of space substitution]
+If you replace ``Hello world'' with ``Hello world'' and then split, it becomes\code{["▁Hello", "▁world"]}. This is attached to the front of each word, so when decoding, if you replace it with a space, the original sentence is restored.
+
+However, you must be careful if there are punctuation marks, such as ``Hello, world!''. A simple split creates ``Hello,'', making the comma part of the word. In reality, GPT-2 separates words/punctuation marks using regular expression patterns, but this is omitted in this book for simplicity.
+\end{warnbox}
+
+\subsection{decoding: byte restoration}
+
+The tricky part of BPE is decoding. Since the token is a sequence of\code{chr(byte)}, the code point of each character must be treated as a byte, the original byte stream must be restored, and then decoded into UTF-8.
+
+\begin{lstlisting}[language=Python]
+    def _tokens_to_bytes(self, tokens: list[str]) -> bytes:
+        """BPE Convert tokens to bytes. Code point of each character as byte."""
+        out = bytearray()
+        for tok in tokens:
+            for c in tok:
+                out.append(ord(c) & 0xFF)
+        return bytes(out)
+\end{lstlisting}
+
+For example, if there is a `` Hello'' token, (U+2581) is\code{0xE2 0x96 0x81}in UTF-8, so it is 3 bytes, but during BPE learning, the `` '' character itself was processed as 3 individual byte tokens, so it is expressed as\code{chr(0xE2) + chr(0x96) + chr(0x81)}. When decoding, if you extract the bytes from each\code{chr(b)}to\code{ord()}, you get the original byte stream\code{0xE2 0x96 0x81 0x48 0x65 0x6C 0x6C 0x6F}, and if you decode this to UTF-8, you get ``Hello''.
+
+\section{Unigram tokenizer}
+
+\keyterm{Unigram}Tokenizer is a method proposed by Kudo (2018) as part of SentencePiece. If BPE is ``frequency-based merging,'' Unigram is ``probability-based partitioning.''
+
+\subsection{intuition}
+
+Unigram assigns a probability to each token. There are several possible divisions for the sentence ``lower'':
+\begin{itemize}
+\item\code{[l, o, w, e, r]}: 5 tokens
+\item\code{[lo, w, er]}: 3 tokens
+\item\code{[low, er]}: 2 tokens
+\item\code{[lower]}: 1 token
+\end{itemize}
+
+The probability of each split is calculated as the product of the token probabilities. Select the split with the highest probability. If ``lower'' is in the vocabulary and with high probability,\code{[lower]}is chosen, but if not, it is split into smaller units.
+
+\subsection{algorithm}
+
+\begin{enumerate}
+\item Extract all substrings from the corpus as candidate tokens and count their frequencies.
+\item Converts frequency to probability and assigns a log probability score to each token.
+\item EM(Expectation-Maximization) iteration:
+    \begin{itemize}
+\item E-step: Search for optimal segmentation of each word with Viterbi algorithm.
+\item M-step: Update token probability with split result.
+    \end{itemize}
+\item Reduce vocabulary by removing tokens with the lowest scores.
+\end{enumerate}
+
+\subsection{Viterbi decoding}
+
+Dynamic programming finds the ``token split with the highest total log probability'' for a given word.
+
+\begin{lstlisting}[language=Python]
+    def _viterbi(self, word: str) -> tuple[list[str], float]:
+        n = len(word)
+        # dp[i] = (maximum score, previous index, old token)
+        dp = [(-float("inf"), -1, "") for _ in range(n + 1)]
+        dp[0] = (0.0, -1, "")
+        for i in range(1, n + 1):
+            for j in range(max(0, i - 16), i):
+                substr = word[j:i]
+                score = self.token_scores.get(substr, -20.0)
+                cand = dp[j][0] + score
+                if cand > dp[i][0]:
+                    dp[i] = (cand, j, substr)
+        # backtracking
+        path, i = [], n
+        while i > 0:
+            _, j, tok = dp[i]
+            path.append(tok)
+            i = j
+        path.reverse()
+        return path, dp[n][0]
+\end{lstlisting}
+
+\begin{infobox}[Viterbi’s complexity]
+The secret to shortening it to$O(n \cdot L)$instead of$O(n^2)$is the\code{max(0, i-16)}part. Since the token length rarely exceeds 16, the search space is reduced by limiting the range of$j$. The actual SentencePiece also uses similar optimization.
+\end{infobox}
+
+\section{BPE vs Unigram comparison}
+
+\begin{center}
+\begin{tabularx}{\textwidth}{lXX}
+\toprule
+ & \textbf{BPE} & \textbf{Unigram} \\
+\midrule
+Learning method & frequency-based merging & probability-based segmentation (EM) \\
+Encoding & applying merge rule order & optimal splitting with Viterbi \\
+Deterministic & O (same input, same output) & O \\
+Supports multi-splitting & X & O (sampling possible) \\
+Main uses & GPT-2, GPT-3, LLaMA & T5, ALBERT, mBART \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+\section{Tokenizer Test}
+
+Once implementation is complete, verify it with unit tests. The most important test is that\keyterm{Round Trip (round-trip) test}: the original text must be restored when encoded and then decoded.
+
+\begin{lstlisting}[language=Python]
+def test_encode_decode_roundtrip():
+    tok = BPETokenizer()
+    tok.train(CORPUS, vocab_size=200)
+    text = "the quick fox"
+    ids = tok.encode(text)
+    decoded = tok.decode(ids)
+    assert " ".join(decoded.split()) == "the quick fox"
+
+def test_bos_eos_addition():
+    tok = BPETokenizer()
+    tok.train(CORPUS, vocab_size=100)
+    ids = tok.encode("hello", add_bos=True, add_eos=True)
+    assert ids[0] == tok.special.bos_id
+    assert ids[-1] == tok.special.eos_id
+
+def test_unknown_token_handled():
+    """Even characters that are not in the vocabulary are processed byte by byte. unkshould not occur."""
+    tok = BPETokenizer()
+    tok.train(CORPUS, vocab_size=100)
+    ids = tok.encode("hi")
+    assert tok.special.unk_id not in ids  # Because it is decomposed into bytes unk doesn't exist
+
+def test_save_load(tmp_path):
+    tok = BPETokenizer()
+    tok.train(CORPUS, vocab_size=150)
+    path = tmp_path / "tok.json"
+    tok.save(path)
+    tok2 = BPETokenizer.load(path)
+    text = "the quick fox"
+    assert tok.encode(text) == tok2.encode(text)
+\end{lstlisting}
+
+\begin{notebox}[Testing Philosophy]
+All modules in this book have three levels of testing:
+\begin{itemize}
+\item\textbf{Geometry test (shape test)}: Whether the shape of the tensor matches expected.
+\item\textbf{Numerical test (numeric test)}: Compare with hand calculation results for small inputs.
+\item\textbf{integration testing}: Operates end-to-end when connecting multiple modules.
+\end{itemize}
+Only code that passes these three tests is included in the book.
+
+Round-trip testing is an example of integration testing. Although it seems self-evident that ``encoding and then decoding will yield the original text'', in reality, bugs can occur at various stages, such as handling whitespace, removing multibyte characters, and special tokens. If this test passes, you can be confident that the entire pipeline is operating correctly.
+\end{notebox}
+
+\section{practice: Training tokenizer with real corpora}
+
+If you run the book's\code{scripts/tiny\_train.py}demo, you can actually see the process of learning the BPE tokenizer.
+
+\begin{lstlisting}[style=bashstyle]
+cd make-llm-basic
+python scripts/tiny_train.py --vocab 500
+\end{lstlisting}
+
+Example output:
+\begin{lstlisting}[basicstyle=\ttfamily\footnotesize, backgroundcolor=\color{codebg}, frame=single]
+[1/5] Learning tokenizer...
+    complete: 308 tokens, 1.2 seconds
+    sample: 'the quick brown fox jumps over the lazy dog'
+    → 18 tokens: [264, 282, 291, 267, 261, 110, ...]
+\end{lstlisting}
+
+\section{summation}
+
+\begin{itemize}
+\item The tokenizer is the first step in LLM that converts text into a sequence of integers.
+\item The subword method strikes a balance between vocabulary size and OOV.
+\item BPE is frequency-based merging, Unigram is probability-based splitting.
+\item Special token\code{<pad>/<bos>/<eos>/<unk>}is fixed to ID 0$\sim$3.
+\item Byte-wise BPE virtually eliminates OOV.
+\item Find the optimal division of Unigram in$O(n)$using the Viterbi algorithm.
+\item All implementations are verified with pytest unit tests.
+\end{itemize}
+
+\section{practice problems}
+
+\begin{enumerate}
+\item What happens if we merge the ``least frequent pair'' instead of the ``most frequent pair'' when learning BPE? Predict the results and experiment.
+\item What happens if you change the\code{score = -20.0}penalty value to\code{-5.0}in the Unigram tokenizer?
+\item Let’s say you are learning the Korean corpus ``Hello, nice to meet you'' using BPE. What is the difference between a vocabulary size of 100 and 1000?
+\item What tokens are lost if Viterbi reduces the token length cap to 4 instead of 16?
+\item\code{<bos>}Think about why you need a token. Will the model work without it?
+\end{enumerate}
+
+In the next chapter, we implement an embedding layer that converts token IDs into dense vectors.

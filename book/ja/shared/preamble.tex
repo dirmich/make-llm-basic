@@ -1,0 +1,206 @@
+% shared/preamble.tex — Make LLM シリーズ共通プリアンブル
+% 両方の本（basic、advanced）から\input{shared/preamble.tex}に読み込みます。
+
+% ====== Font & Japanese language support ======
+\usepackage{fontspec}
+\setmainfont{MS Gothic}
+\setsansfont{MS Gothic}
+\setmonofont{MS Gothic}[Scale=0.85]
+
+% ======レイアウト======
+\usepackage[a4paper, top=2.5cm, bottom=2.5cm, left=2.5cm, right=2.5cm]{geometry}
+\usepackage{microtype}
+\usepackage{parskip}
+\setlength{\parindent}{0pt}
+\setlength{\parskip}{0.55em}
+\linespread{1.15}
+
+% ======数学＆表＆リスト======
+\usepackage{amsmath,amssymb,amsthm}
+\usepackage{booktabs}
+\usepackage{tabularx}
+\usepackage{longtable}
+\usepackage{enumitem}
+\setlist{itemsep=0.3em, parsep=0.2em}
+\usepackage{multirow}
+
+% ======コード======
+\usepackage{listings}
+\usepackage{xcolor}
+
+% ======カラー（レトロテクニカル）======
+\definecolor{inkblue}{HTML}{1F3A5F}
+\definecolor{inkred}{HTML}{8B2D2D}
+\definecolor{inkgreen}{HTML}{2D5F2D}
+\definecolor{inkgray}{HTML}{4A4A4A}
+\definecolor{inklight}{HTML}{8A8A8A}
+\definecolor{paperbg}{HTML}{FBF8F1}
+\definecolor{codebg}{HTML}{F4F0E6}
+\definecolor{codecomment}{HTML}{6A7F4F}
+\definecolor{codekeyword}{HTML}{1F3A5F}
+\definecolor{codestring}{HTML}{8B2D2D}
+\definecolor{codenumber}{HTML}{B5651D}
+\definecolor{rule}{HTML}{1F3A5F}
+\definecolor{boxbg}{HTML}{F0EAD6}
+\definecolor{boxbg2}{HTML}{E8F0F8}
+
+% ======ボックス======
+\usepackage[most]{tcolorbox}
+\tcbuselibrary{listings,skins,breakable}
+
+\newtcolorbox{notebox}[1][참고]{
+  enhanced, breakable, sharp corners, boxrule=0.5pt,
+  colback=boxbg, colframe=inkblue,
+  fonttitle=\bfseries\sffamily\color{white},
+  coltitle=white,
+  title=#1,
+  left=8pt, right=8pt, top=4pt, bottom=4pt,
+  attach boxed title to top left={xshift=4pt, yshift=-2pt},
+  boxed title style={colback=inkblue, sharp corners, boxrule=0pt}
+}
+
+\newtcolorbox{warnbox}[1][주의]{
+  enhanced, breakable, sharp corners, boxrule=0.5pt,
+  colback=inkred!5, colframe=inkred,
+  fonttitle=\bfseries\sffamily\color{white},
+  coltitle=white,
+  title=#1,
+  left=8pt, right=8pt, top=4pt, bottom=4pt,
+  attach boxed title to top left={xshift=4pt, yshift=-2pt},
+  boxed title style={colback=inkred, sharp corners, boxrule=0pt}
+}
+
+\newtcolorbox{infobox}[1][개념]{
+  enhanced, breakable, sharp corners, boxrule=0.5pt,
+  colback=boxbg2, colframe=inkblue,
+  fonttitle=\bfseries\sffamily\color{white},
+  coltitle=white,
+  title=#1,
+  left=8pt, right=8pt, top=4pt, bottom=4pt,
+  attach boxed title to top left={xshift=4pt, yshift=-2pt},
+  boxed title style={colback=inkblue, sharp corners, boxrule=0pt}
+}
+
+\newtcolorbox{formula}[1][식]{
+  enhanced, breakable, sharp corners, boxrule=0.5pt,
+  colback=paperbg, colframe=inkgray,
+  fonttitle=\bfseries\sffamily\color{white},
+  coltitle=white,
+  title=#1,
+  left=10pt, right=10pt, top=6pt, bottom=6pt,
+  attach boxed title to top left={xshift=4pt, yshift=-2pt},
+  boxed title style={colback=inkgray, sharp corners, boxrule=0pt}
+}
+
+% ======コードスタイル======
+\lstdefinestyle{pythonstyle}{
+  language=Python,
+  basicstyle=\ttfamily\footnotesize,
+  keywordstyle=\color{codekeyword}\bfseries,
+  commentstyle=\color{codecomment}\itshape,
+  stringstyle=\color{codestring},
+  numberstyle=\color{inklight}\ttfamily\scriptsize,
+  backgroundcolor=\color{codebg},
+  frame=single,
+  framerule=0.3pt,
+  rulecolor=\color{rule!50},
+  numbers=left,
+  numbersep=8pt,
+  showstringspaces=false,
+  breaklines=true,
+  breakatwhitespace=true,
+  tabsize=4,
+  columns=flexible,
+  keepspaces=true,
+  extendedchars=true,
+  aboveskip=0.8em,
+  belowskip=0.8em,
+}
+\lstdefinestyle{bashstyle}{
+  language=bash,
+  basicstyle=\ttfamily\footnotesize,
+  keywordstyle=\color{codekeyword}\bfseries,
+  commentstyle=\color{codecomment}\itshape,
+  stringstyle=\color{codestring},
+  backgroundcolor=\color{codebg},
+  frame=single, framerule=0.3pt, rulecolor=\color{rule!50},
+  numbers=none, showstringspaces=false,
+  breaklines=true, tabsize=4, columns=flexible,
+  aboveskip=0.8em, belowskip=0.8em,
+}
+\lstset{style=pythonstyle}
+
+% ======ヘッダ/フッタ======
+% ヘッダーなし、footerにはページ番号のみ
+\usepackage{fancyhdr}
+\pagestyle{fancy}
+\fancyhf{}
+\fancyfoot[C]{\thepage}
+\renewcommand{\headrulewidth}{0pt}
+\renewcommand{\footrulewidth}{0pt}
+\setlength{\headheight}{14pt}
+
+% プレーンスタイル（チャプターの最初のページなど）もfooterページのみ
+\fancypagestyle{plain}{%
+  \fancyhf{}%
+  \fancyfoot[C]{\thepage}%
+  \renewcommand{\headrulewidth}{0pt}%
+  \renewcommand{\footrulewidth}{0pt}%
+}
+
+% ======セクションスタイル======
+\usepackage{titlesec}
+\titleformat{\chapter}[display]
+  {\normalfont\Huge\bfseries\sffamily\color{inkblue}}
+  {\chaptertitlename\ \thechapter}{20pt}{\Huge}
+\titlespacing*{\chapter}{0pt}{0pt}{30pt}
+\titleformat{\section}
+  {\Large\bfseries\sffamily\color{inkblue}}{\thesection}{0.8em}{}
+\titleformat{\subsection}
+  {\large\bfseries\sffamily\color{inkgray}}{\thesubsection}{0.7em}{}
+\titleformat{\subsubsection}
+  {\normalsize\bfseries\sffamily}{\thesubsubsection}{0.6em}{}
+\titlespacing*{\section}{0pt}{1.4em}{0.6em}
+\titlespacing*{\subsection}{0pt}{1.0em}{0.4em}
+\titlespacing*{\subsubsection}{0pt}{0.8em}{0.3em}
+
+% ======目次スタイル======
+\usepackage{tocloft}
+\renewcommand{\cftchapfont}{\bfseries\sffamily\color{inkblue}}
+\renewcommand{\cftsecfont}{\sffamily}
+\renewcommand{\cftsubsecfont}{\sffamily\small}
+
+% ======グラフィックス＆TikZ ======
+\usepackage{graphicx}
+\usepackage{tikz}
+\usetikzlibrary{arrows.meta, positioning, calc, shapes.geometric, fit, backgrounds, decorations.pathmorphing, patterns}
+
+% ======ハイパーリンク（最後）======
+\usepackage[
+  colorlinks=true,
+  linkcolor=inkblue,
+  citecolor=inkgray,
+  urlcolor=inkblue,
+  bookmarks=true,
+  bookmarksnumbered=true,
+  unicode=true
+]{hyperref}
+
+% ======ユーティリティコマンド======
+% \codeは動詞に基づいて_などを安全に処理します
+\usepackage{fancyvrb}
+\newcommand{\code}[1]{\texttt{\small #1}}
+\newcommand{\codev}[1]{\Verb|{#1}|}
+\newcommand{\krquote}[1]{``#1''}
+\newcommand{\englishterm}[1]{\textit{\small #1}}
+\newcommand{\keyterm}[1]{\textbf{#1}}
+\newcommand{\warning}{\textcolor{inkred}{$\blacktriangle$}\,}
+
+% イラストキャプションスタイル
+\usepackage[font=small,labelfont=bf,textfont=it]{caption}
+
+% 下線(ulem)
+\usepackage[normalem]{ulem}
+
+% グローバル空白ページの防止(cleardoublepageをclearpageに置き換えます)
+\let\cleardoublepage\clearpage

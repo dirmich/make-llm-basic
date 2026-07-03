@@ -1,0 +1,87 @@
+\chapter{Advanced topic preview}
+\label{app:advanced_preview}
+
+This appendix briefly introduces the advanced topics covered in Volume 2,\textit{Make LLM-advanced}. It helps readers who have completed Volume 1 decide on the next direction of study.
+
+\section{distributed learning}
+
+Volume 1 model was trained on a single GPU/CPU. However, models larger than 70B do not fit into single GPU memory.
+
+\keyterm{DDP (Distributed Data Parallel)}: Place a model replica on each GPU and split only the data. The simplest.
+
+\keyterm{FSDP (Fully Sharded Data Parallel)}: Shading all parameters, gradients, and optimizer states. 70B+ models can be trained.
+
+\keyterm{ZeRO}: DeepSpeed’s staged sharding. Progressive memory savings with ZeRO-1/2/3.
+
+\keyterm{pipeline parallel}: Split the model into GPU by layer. Suitable for inter-node communication.
+
+\keyterm{tensor parallel}: Split the weight of a single layer. Megatron-LM method.
+
+\section{modern architecture}
+
+Volume 1 is close to the original Transformers from 2017. Modern LLMs use more efficient components.
+
+\keyterm{RoPE (Rotary Position Embedding)}: Position encoding with complex rotation. Excellent extrapolation makes it advantageous for processing long contexts. LLaMA, using Mistral.
+
+\keyterm{GQA (Grouped Query Attention)}: Save inference memory by reducing KV head. LLaMA-2 70B uses GQA-8.
+
+\keyterm{SwiGLU}: Improved FFN performance by activating GLU variants.
+
+\keyterm{RMSNorm}: A lightweight version of LayerNorm. Calculation amount reduced by 10$\sim$20\%.
+
+\keyterm{MoE (Mixture-of-Experts)}: Among multiple experts, only the top K are activated for each token. Mixtral 8x7B operating with 47B total parameters and 13B active.
+
+\section{Quantization and inference optimization}
+
+\keyterm{INT8/INT4 Quantization}: Saves memory 4$\sim$8 times by converting weights to low-bit integers. Critically reduce inference costs.
+
+\keyterm{AWQ}: Preserve important channels with activation statistics. High accuracy even with INT4.
+
+\keyterm{KV Cache}: Reuse previous K, V in autoregressive generation. Every step complexity$O(L^2) \to O(L)$.
+
+\keyterm{PagedAttention}: Page-level KV management in vLLM. Multi-sequence throughput 2$\sim$4x improvement.
+
+\section{Alignment and fine tuning}
+
+Volume 1 model only ``predicts the next token''. Sorting is required to create a chatbot.
+
+\keyterm{SFT (Supervised Fine-Tuning)}: Supervised learning with command-response pairs. Learning basic chatbot behavior.
+
+\keyterm{RLHF}: Preference optimization with compensation model + PPO. Used by ChatGPT.
+
+\keyterm{DPO (Direct Preference Optimization)}: Direct preference optimization without compensation model. Simple and effective. Zephyr, using Llama-2-Chat.
+
+\keyterm{LoRA}: Save 99% on fine tuning costs with low-rank adapter. Fine tuning the 7B model with a 200MB adapter.
+
+\section{data pipeline}
+
+\keyterm{quality filter}: Remove low-quality text by length, language, and repetition rate.
+
+\keyterm{MinHash}: Duplicate document detection using Jaccard similarity approximation. 30$\sim$50% of web data is duplicated.
+
+\keyterm{synthetic data}: Generate domain-specific data with powerful models. Evol-Instruct, Self-Instruct, etc.
+
+\section{Volume 2 Study Preparation}
+
+Volume 2 expands on the code of Volume 1. Take the GPT model from Volume 1:
+\begin{itemize}
+\item Wrapped in distributed learning (2$\sim$Chapter 4)
+\item Replace attention with GQA (Chapter 5)
+\item Changing FFN to SwiGLU (Chapter 5)
+\item Add LoRA adapter (Chapter 8).
+\end{itemize}
+
+If you are familiar with Volume 1, you can naturally follow Volume 2. It is recommended that you experiment by modifying the Volume 1 code yourself.
+
+\section{Recommended Learning Path}
+
+\begin{enumerate}
+\item Volume 1 Learning small models with code (\code{scripts/tiny\_train.py}).
+\item Experiment with your own corpora (Wikipedia Korean, GitHub code, etc.).
+\item Move on to volume 2 and build a distributed learning environment.
+\item Fine tuning experiment with LoRA (\code{scripts/lora\_finetune.py}).
+\item Optimize inference with quantization (\code{scripts/quantize\_demo.py}).
+\item Practice serving with real HuggingFace models (vLLM, TGI).
+\end{enumerate}
+
+By following this path, you will have the ability to understand and run an LLM at ChatGPT level. Never stop coding. Never stop experimenting. That's the only way to improve your skills.

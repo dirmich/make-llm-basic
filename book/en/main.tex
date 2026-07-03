@@ -1,0 +1,58 @@
+\documentclass[11pt,a4paper,openany]{book}
+
+% Shared preamble
+\input{shared/preamble.tex}
+
+% ====== Book metadata ======
+\hypersetup{
+  pdftitle={Make LLM-basic},
+  pdfauthor={dirmich},
+pdfsubject={A guide to creating your own LLM from the basics},
+pdfkeywords={LLM, PyTorch, Transformer, deep learning, NLP}
+}
+
+\begin{document}
+
+% ==================== Cover ====================
+\input{chapters/cover.tex}
+
+\frontmatter
+
+% ==================== Table of Contents ====================
+\clearpage
+{\hypersetup{linkcolor=black}
+\tableofcontents
+}
+
+% ==================== Glossary ====================
+\clearpage
+\input{chapters/glossary.tex}
+
+% ==================== Preface ====================
+\clearpage
+\input{chapters/preface.tex}
+
+\mainmatter
+
+% ==================== Main Chapter ====================
+\input{chapters/ch01_intro.tex}
+\input{chapters/ch02_setup.tex}
+\input{chapters/ch03_tokenizer.tex}
+\input{chapters/ch04_embedding.tex}
+\input{chapters/ch05_attention.tex}
+\input{chapters/ch06_transformer_block.tex}
+\input{chapters/ch07_gpt_training.tex}
+\input{chapters/ch08_generation.tex}
+\input{chapters/ch09_wrapup.tex}
+
+% ==================== Appendix ====================
+\appendix
+\input{chapters/appendix_a_math.tex}
+\input{chapters/appendix_b_code.tex}
+\input{chapters/appendix_c_faq.tex}
+\input{chapters/appendix_d_answers.tex}
+\input{chapters/appendix_e_preview.tex}
+
+\backmatter
+
+\end{document}

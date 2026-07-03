@@ -1,0 +1,87 @@
+\chapter{고급 주제 미리보기}
+\label{app:advanced_preview}
+
+이 부록은 2권 \textit{Make LLM-advanced}에서 다룰 고급 주제를 간략히 소개한다. 1권을 마친 독자가 다음 학습 방향을 잡는 데 도움이 된다.
+
+\section{분산 학습}
+
+1권 모델은 단일 GPU/CPU에서 학습했다. 하지만 70B 이상 모델은 단일 GPU 메모리에 들어가지 않는다.
+
+\keyterm{DDP (Distributed Data Parallel)}: 모델 복제본을 각 GPU에 두고 데이터만 분할. 가장 단순.
+
+\keyterm{FSDP (Fully Sharded Data Parallel)}: 파라미터, 그래디언트, 옵티마이저 상태를 모두 샤딩. 70B+ 모델 학습 가능.
+
+\keyterm{ZeRO}: DeepSpeed의 단계적 샤딩. ZeRO-1/2/3로 점진적 메모리 절약.
+
+\keyterm{파이프라인 병렬}: 모델을 층별로 GPU에 분할. 노드 간 통신에 적합.
+
+\keyterm{텐서 병렬}: 단일 레이어의 가중치를 분할. Megatron-LM 방식.
+
+\section{최신 아키텍처}
+
+1권은 2017년 원본 트랜스포머에 가깝다. 최신 LLM은 더 효율적인 컴포넌트를 사용한다.
+
+\keyterm{RoPE (Rotary Position Embedding)}: 복소수 회전으로 위치 인코딩. extrapolation이 우수하여 긴 문맥 처리에 유리. LLaMA, Mistral 사용.
+
+\keyterm{GQA (Grouped Query Attention)}: KV 헤드를 줄여 추론 메모리 절약. LLaMA-2 70B가 GQA-8 사용.
+
+\keyterm{SwiGLU}: GLU 변종 활성화로 FFN 성능 향상.
+
+\keyterm{RMSNorm}: LayerNorm의 경량 버전. 계산량 10$\sim$20\% 감소.
+
+\keyterm{MoE (Mixture-of-Experts)}: 여러 전문가 중 토큰별로 상위 K개만 활성화. Mixtral 8x7B가 47B 총 파라미터에 13B 활성으로 운영.
+
+\section{양자화와 추론 최적화}
+
+\keyterm{INT8/INT4 양자화}: 가중치를 저비트 정수로 변환하여 메모리 4$\sim$8배 절약. 추론 비용 결정적 감소.
+
+\keyterm{AWQ}: 활성값 통계로 중요 채널 보존. INT4에서도 높은 정확도.
+
+\keyterm{KV Cache}: 자기회귀 생성에서 이전 K, V를 재사용. 매 스텝 복잡도 $O(L^2) \to O(L)$.
+
+\keyterm{PagedAttention}: vLLM의 페이지 단위 KV 관리. 다중 시퀀스 처리량 2$\sim$4배 향상.
+
+\section{정렬과 파인튜닝}
+
+1권 모델은 ``다음 토큰 예측''만 한다. 챗봇으로 만들려면 정렬이 필요.
+
+\keyterm{SFT (Supervised Fine-Tuning)}: 명령-응답 쌍으로 지도학습. 기본 챗봇 행동 학습.
+
+\keyterm{RLHF}: 보상 모델 + PPO로 선호도 최적화. ChatGPT가 사용.
+
+\keyterm{DPO (Direct Preference Optimization)}: 보상 모델 없이 직접 선호도 최적화. 단순하고 효과적. Zephyr, Llama-2-Chat 사용.
+
+\keyterm{LoRA}: 저랭크 어댑터로 파인튜닝 비용 99\% 절약. 7B 모델을 200MB 어댑터로 파인튜닝.
+
+\section{데이터 파이프라인}
+
+\keyterm{품질 필터}: 길이, 언어, 반복 비율로 저품질 텍스트 제거.
+
+\keyterm{MinHash}: Jaccard 유사도 근사로 중복 문서 탐지. 웹 데이터의 30$\sim$50\%가 중복.
+
+\keyterm{합성 데이터}: 강력한 모델로 특정 도메인 데이터 생성. Evol-Instruct, Self-Instruct 등.
+
+\section{2권 학습 준비}
+
+2권은 1권의 코드를 기반으로 확장한다. 1권의 GPT 모델을 가져와:
+\begin{itemize}
+  \item 분산 학습으로 감싸고 (2$\sim$4장)
+  \item 어텐션을 GQA로 교체하고 (5장)
+  \item FFN을 SwiGLU로 바꾸고 (5장)
+  \item LoRA 어댑터를 추가한다 (8장).
+\end{itemize}
+
+1권을 익숙하게 다루면 2권도 자연스럽게 따라갈 수 있다. 1권 코드를 직접 수정해보며 실험하는 것을 권장한다.
+
+\section{추천 학습 경로}
+
+\begin{enumerate}
+  \item 1권 코드로 작은 모델 학습 (\code{scripts/tiny\_train.py}).
+  \item 자신의 말뭉치로 실험 (위키백과 한국어, GitHub 코드 등).
+  \item 2권으로 넘어가 분산 학습 환경 구축.
+  \item LoRA로 파인튜닝 실험 (\code{scripts/lora\_finetune.py}).
+  \item 양자화로 추론 최적화 (\code{scripts/quantize\_demo.py}).
+  \item 실제 HuggingFace 모델로 서빙 연습 (vLLM, TGI).
+\end{enumerate}
+
+이 경로를 따라가면 ChatGPT 수준의 LLM을 이해하고 운영할 수 있는 능력을 갖추게 될 것이다. 코딩을 멈추지 마라. 실험을 멈추지 마라. 그것이 실력을 키우는 유일한 길이다.

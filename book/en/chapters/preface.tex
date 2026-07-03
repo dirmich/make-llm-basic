@@ -1,0 +1,43 @@
+% chapters/preface.tex — Preface
+
+\chapter*{Preface}
+\addcontentsline{toc}{chapter}{Preface}
+\markboth{preface}{Preface}
+
+\section*{Why I wrote this book}
+
+Since ChatGPT was released in late 2022, large language models (LLMs) have become the hottest topic in the field of artificial intelligence. Numerous developers and researchers quickly learned how to download, fine-tune, and integrate already-made models into services through HuggingFace Transformers. However, there are still few people who can confidently answer the question, ``How does this model work internally?''
+
+This book was written to answer that question. The goal of this book is to understand the framework of LLM by creating a tokenizer, implementing attention by hand, assembling transformer blocks, and running a learning loop. Instead of using an abstracted library, you can create it yourself from start to finish using only the basic operations of PyTorch. All the details encountered in the process are ultimately the path to ``understanding'' the LLM.
+
+\section*{Features of this book}
+
+This book does not simply list theories.\textbf{Create the code first, After verifying with unit tests, The process is explained in a book..}All Python code that appears in the book is actually executed, and only code that has passed pytest-based unit tests is included. Readers can download the entire code from the GitHub repository to run, modify, and learn directly.
+
+Each chapter imports and uses the module implemented in the previous chapter. For example, the embedding module in Chapter 4 uses the tokenizer in Chapter 3, and the attention in Chapter 5 uses the embedding in Chapter 4. Through this ``building structure'', readers can experience step by step how the LLM is assembled. Mathematical formulas appear after intuitive explanations, and consideration is given to ensure that even beginners do not miss the flow.
+
+\section*{Who should read it}
+
+The main readers of this book are developers who know basic Python syntax but are new to deep learning. This includes engineers who have used HuggingFace Transformers but do not know their inner workings, and researchers who have read the ``Attention Is All You Need'' paper but have never implemented it in code. Calculus and basic linear algebra are assumed, but advanced topics such as matrix differentiation are supplemented in the appendix.
+
+\begin{flushright}
+\textit{summer 2026}\\[0.3em]
+\textbf{dirmich}
+\end{flushright}
+
+\newpage
+
+\section*{Acknowledgments}
+
+While writing this book, I received help from numerous open source projects and papers. Special thanks to Andrej Karpathy's nanoGPT, HuggingFace Tokenizers, and the excellent documentation from the PyTorch development team. These are pioneers who have dedicated themselves to the democratization of LLM.
+
+We are also grateful to the numerous researchers on whom the code in this book is based. Ashish Vaswani and co-authors of the original Transformers paper are what started it all. Alec Radford and the OpenAI team demonstrated the potential of scaling with the GPT series. Tianyi Zhang and Jason Wei laid the foundation for instruction tuning and alignment.
+
+I would also like to thank my family and friends. This book would not have been completed without the patience of those who waited silently while I wrote it.
+
+Lastly, to all readers of this book. Your curiosity and passion create the future of LLM. Build it, experiment, fail, and try again. That is the essence of learning.
+
+\begin{flushright}
+\textbf{dirmich}\\
+\textit{Highmaru Press}
+\end{flushright}

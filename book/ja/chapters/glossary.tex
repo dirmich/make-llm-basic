@@ -1,0 +1,128 @@
+% chapters/glossary.tex — 用語集 (アルファベット順)
+
+\chapter*{用語集}
+\addcontentsline{toc}{chapter} {用語集}
+\markboth{用語集}{用語集}
+
+この用語集は、本書で使用する主な用語をアルファベット順にまとめたものです。各項目は、短い定義で対応する章番号を表示し、読者が簡単に参照できるように構成しました。初めて本を読むときは軽く見て、本文を読んで知らない用語が出たらまた戻って参照してほしい。
+
+\begin{description}[leftmargin=2.5em, style=nextline, font=\bfseries\sffamily\color{inkblue}]
+
+\item [Activation (アクティブ値)]
+ニューラルネットワークの各層を通過した後に出力される値。レイヤーの出力テンソルを意味し、次のレイヤーの入力となる。\textit{メモ: 第4章}
+
+\item [AdamW]
+Adam オプティマイザに重み減衰を組み合わせた最適化アルゴリズム現代LLM学習の事実上の標準。\textit{メモ: 第7章}
+
+\item [Attention (アテンション)]
+シーケンスの各位置が他のすべての位置にどれだけ注意を払うかを学習するメカニズム。トランスのコア。\textit{メモ: 5章}
+
+\item [Backpropagation]
+ニューラルネットワークの損失を各パラメータに微分して勾配を計算するアルゴリズム連鎖法則に基づいています。\textit{メモ: 第7章}
+
+\item [BPE (Byte Pair Encoding)]
+バイト単位で始まり、最も頻繁に登場するペアをマージしていくトルクナイザアルゴリズム。 GPT-2、GPT-3などが使用。\textit{メモ: 第3章}
+
+\item [Causal Mask (因果マスク)]
+自己回帰モデルで未来のトークンが見えないように隠すハ三角マスク。\textit{メモ: 5章}
+
+\item [Context Length (コンテキスト長)]
+モデルが一度に処理できるトークンの最大数。 GPT-2は1024、GPT-4は128K。\textit{メモ: 第7章}
+
+\item [Cross-Entropy Loss (クロスエントロピー損失)]
+分類問題における予測確率分布と正解分布の差を測定する損失関数言語モデリングの標準損失\textit{メモ: 第7章}
+
+\item [Decoder (デコーダ)]
+トランスでシーケンスを生成する部分。 GPTはデコーダのみ使用する構造。\textit{メモ: 第6章}
+
+\item [Dropout]
+学習時、いくつかのニューロンをランダムにゼロにして過適合を防ぐ正規化手法。\textit{メモ: 第4章}
+
+\item [Embedding (埋め込み)]
+離散的なトークンIDを連続した密集ベクトルに変換するプロセス。またはそのベクトル自体。\textit{メモ: 第4章}
+
+\item [Feed-Forward Network (FFN、フォワードニューラルネットワーク)]
+トランスブロックのアテンションの後に適用される位置別の完全接続ニューラルネットワーク。通常2つの線形層+活性化関数。\textit{メモ: 第6章}
+
+\item [GELU (Gaussian Error Linear Unit)]
+ReLUのソフトバージョン。ガウス関数を使用してゼロの周りをスムーズに切り替えます。 GPTモデルが使用。\textit{メモ: 第6章}
+
+\item [Gradient (グラデーション)]
+損失関数の各パラメータの微分値。最適化の方向を指します。\textit{メモ: 第7章}
+
+\item [Greedy Decoding (貪欲デコード)]
+各ステップで最も確率の高いトークンのみを選択する生成戦略。高速ですが単調な出力。\textit{メモ: 第8章}
+
+\item [ヘッド（ヘッド）]
+マルチヘッドアテンションで独立してアテンションを実行する単位。\textit{メモ: 5章}
+
+\item [Layer Normalization (レイヤー正規化)]
+テンソルの最後の次元に沿った平均と分散を正規化する手法トランスフォーマー学習の安定化に必須。\textit{メモ: 第4章, 第6章}
+
+\item [Learning Rate (学習率)]
+グラデーションのステップサイズを決定するハイパーパラメータ。大きすぎると発散、小さすぎるとゆっくりと収束。\textit{メモ: 第7章}
+
+\item [Logits (ロジット)]
+softmax を適用する前の生出力値。通常モデルの最後の線形レイヤ出力。\textit{メモ: 第7章}
+
+\item [Loss Function (損失関数)]
+モデルの予測と正解の差をスカラーで測定する関数学習の最適化の対象。\textit{メモ: 第7章}
+
+\item [Multi-Head Attention (マルチヘッドアテンション)]
+複数のアテンションヘッドを並列に行い、様々なパターンを同時に学習。\textit{メモ: 5章}
+
+\item [Parameter (パラメータ)]
+モデルが学習する重み。線形層のW、bなど。\textit{メモ: 第7章}
+
+\item [Perplexity (パープレクサティ、混乱度)]
+言語モデルの評価指標$PPL = \exp(\text{loss})$。低いほど良いモデル。\textit{メモ: 第7章}
+
+\item [Positional Encoding (位置エンコード)]
+変圧器に順序情報を注入する方法sin/cos または学習可能な埋め込み。\textit{メモ: 第4章}
+
+\item [Pre-LN / Post-LN]
+レイヤ正規化の位置。 Pre-LNはアテンション/FFNの前に、Post-LNは後に適用。 Pre-LNは学習安定性に優れています。\textit{メモ: 第6章}
+
+\item [Residual Connection (残差接続)]
+入力を出力に加算する接続。$y = x + f(x)$。深いネットワーク学習に必須。\textit{メモ: 第6章}
+
+\item [Scaled Dot-Product Attention]
+$Q \cdot K^T / \sqrt{d\_k}$形式のアテンション。トランスの最も基本的な操作。\textit{メモ: 5章}
+
+\item [Self-Attention (自己アテンション)]
+同じシーケンス内のトークン間のアテンション。トランスのコア。\textit{メモ: 5章}
+
+\item [Softmax]
+ベクトルを確率分布に変換する関数。$\text{softmax}(x\_i) = e^{x\_i} / \sum\_j e^{x\_j}$。\textit{メモ: 5章}
+
+\item [Temperature (温度)]
+サンプリング時の分布の鋭さを調整するパラメータ。低いほど決定論的、高いほどランダム。\textit{メモ: 第8章}
+
+\item [Token (トークン)]
+テキストを分割した最小単位。単語、部分単語、またはバイトです。\textit{メモ: 第3章}
+
+\item [Tokenizer (トークナイザー)]
+テキストをトークンIDシーケンスに変換し、その逆のプロセスも実行するモジュール。\textit{メモ: 第3章}
+
+\item [Top-K Sampling]
+次のトークン候補の中で最も確率の高いK個のみを考慮してサンプリングする戦略。\textit{メモ: 第8章}
+
+\item [Top-P (Nucleus) Sampling]
+累積確率がPになるまでのトークンのみを考慮するサンプリング戦略。分布形態に応じて適応的。\textit{メモ: 第8章}
+
+\item [Transformer (トランスフォーマー)]
+Vaswani et al。 （2017）が提案したアテンションベースのニューラルネットワーク構造。現代LLMの基盤。\textit{メモ: 第6章}
+
+\item [Unigram Tokenizer]
+各トークンに確率を割り当て、EMで学習するトークナイザー。 SentencePieceが使用。\textit{メモ: 第3章}
+
+\item [Viterbi Algorithm]
+動的計画法による最適分割を求めるアルゴリズムUnigramトークナイザーのデコードに使用。\textit{メモ: 第3章}
+
+\item [Vocabulary (語彙)]
+トークナイザーが認識するすべてのトークンのセット。語彙サイズは通常1万～10万。\textit{メモ: 第3章}
+
+\item [Weight Tying (ウェイトタイ)]
+入力埋め込みと出力層の重みを共有してパラメータ数を減らす手法\textit{メモ: 第7章}
+
+\end{description}

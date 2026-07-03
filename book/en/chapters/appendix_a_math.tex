@@ -1,0 +1,95 @@
+\chapter{Math Basics Supplement}
+\label{app:math}
+
+This appendix provides supplementary explanations of the mathematical concepts used in the main text. This is reference material for readers who know calculus and basic linear algebra but are not familiar with matrix differentiation.
+
+\section{vectors and matrices}
+
+\keyterm{vector}is a one-dimensional array of numbers.  Expressed as$\mathbf{x} = [x\_1, x\_2, \dots, x\_n]^T$.\keyterm{procession}is a two-dimensional array.$A \in \mathbb{R}^{m \times n}$is$m$row$n$column.
+
+\begin{itemize}
+\item\textbf{dot product (dot product)}:$\mathbf{a} \cdot \mathbf{b} = \sum\_i a\_i b\_i$. Returns a scalar.
+\item\textbf{matrix multiplication}:$C = AB$where$C\_{ij} = \sum\_k A\_{ik} B\_{kj}$.
+\item\textbf{transposition(transpose)}:$A^T$changes rows and columns.
+\item\textbf{norm}:$\|\mathbf{x}\|\_2 = \sqrt{\sum\_i x\_i^2}$. The length of the vector.
+\end{itemize}
+
+\section{Softmax}
+
+\keyterm{Softmax}is a function that converts a random real vector into a probability distribution.
+
+\begin{formula}[Softmax]
+\[
+\text{softmax}(x\_i) = \frac{e^{x\_i}}{\sum\_j e^{x\_j}}
+\]
+All elements of the output are between 0 and 1, and the sum is 1. Used for attention weight, classification model output, etc.
+\end{formula}
+
+\section{Cross-Entropy}
+
+\keyterm{Cross entropy (cross-entropy)}measures the difference between two probability distributions$p, q$.
+
+\begin{formula}[Cross-Entropy]
+\[
+H(p, q) = -\sum\_i p\_i \log q\_i
+\]
+In classification problems,$p$is the answer one-hot vector, and$q$is the model prediction softmax output. Simplify the single correct answer$y$to$H = -\log q\_y$.
+\end{formula}
+
+\section{chain rule and Backpropagation}
+
+\keyterm{chain rule(chain rule)}is the differentiation method for composite functions.
+
+\[
+\frac{d}{dx} f(g(x)) = f'(g(x)) \cdot g'(x)
+\]
+
+Since a neural network is a series of composite functions, the chain rule can be used to calculate the derivative from input to output. This is the mathematical basis of\keyterm{backpropagation}.
+
+PyTorch automates this process, so we do not need to derive the differential equation ourselves. However, to understand ``which parameters affect loss and how much'', you must know the concept of the chain rule.
+
+\section{matrix differentiation}
+
+When the loss$\mathcal{L}$depends on the matrix$W$,$\partial \mathcal{L} / \partial W$is a matrix of the same shape as$W$, and each element is$\partial \mathcal{L} / \partial W\_{ij}$.
+
+\keyterm{Jacobian}is a matrix representing the differentiation of a vector function.  When$\mathbf{y} = f(\mathbf{x})$$J\_{ij} = \partial y\_i / \partial x\_j$.
+
+For more information, see ``The Matrix Cookbook'' (Petersen \& Pedersen).
+
+\section{normal distribution}
+
+Probability density function of\keyterm{Normal distribution (normal distribution)}$\mathcal{N}(\mu, \sigma^2)$:
+
+\[
+p(x) = \frac{1}{\sqrt{2\pi\sigma^2}} \exp\left(-\frac{(x-\mu)^2}{2\sigma^2}\right)
+\]
+
+Often used for weight initialization.  Using$\mu=0, \sigma = 1/\sqrt{d}$ensures that the output variance remains constant even as the input dimension increases (the basic idea of ​​Xavier initialization).
+
+\section{Information Theory Basics}
+
+\keyterm{Entropy (entropy)}measures the ``randomness'' of a probability distribution.
+
+\[
+H(p) = -\sum\_i p\_i \log p\_i
+\]
+
+\keyterm{KL diffusion(KL divergence)}is the difference between the two distributions:
+
+\[
+D\_{KL}(p \| q) = \sum\_i p\_i \log \frac{p\_i}{q\_i}
+\]
+
+Cross-entropy is decomposed into$H(p) + D\_{KL}(p \| q)$.  Since$H(p)$is fixed, minimizing cross-entropy is the same as minimizing$D\_{KL}$.
+
+\section{Optimization Basics}
+
+\keyterm{Gradient descent (gradient descent)}: Update parameters to reduce loss.
+
+\[
+\theta \leftarrow \theta - \eta \nabla\_\theta \mathcal{L}
+\]
+
+$\eta$is the learning rate.\keyterm{Adam}is an optimization algorithm that combines momentum and adaptive learning rate.\keyterm{AdamW}is a version that combines Adam with weight decay and is the standard for LLM learning.
+
+Detailed derivation can be found in Goodfellow et al. ``Deep Learning'' 4$\sim$Please refer to Chapter 8.

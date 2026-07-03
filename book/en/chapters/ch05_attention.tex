@@ -1,0 +1,331 @@
+\chapter{attention mechanism}
+\label{ch:attention}
+
+In this chapter, we implement the\keyterm{Attention (attention)}mechanism, the core of Transformer. Starting from Scaled Dot-Product Attention, we look at it step by step to Multi-Head Attention.
+
+\section{intuition: What is Attention?}
+
+What does ``it'' refer to in the sentence ``The cat sat on the mat because\uline{it}was tired''? A person easily knows that it is a ``cat''. How does a computer know? Attention is the mechanism that solves this problem. The idea is to learn how much attention each word pays to every other word, so that ``it'' gives a higher weight to ``cat''.
+
+As a formula, attention is an operation that calculates the similarity with all keys$K$for a given query$Q$and then adds the weighted value$V$based on the similarity.
+
+\begin{formula}[General definition of attention]
+\[
+\text{Attention}(Q, K, V) = \text{softmax}\left(\frac{Q \cdot K^T}{\sqrt{d\_k}}\right) \cdot V
+\]
+\begin{itemize}
+\item $Q$: Query (representation of the token currently being viewed)
+\item $K$: key (``label'' of other tokens)
+\item $V$: value (the ``content'' of other tokens)
+\item $d\_k$: Dimension of the key.  The reason for dividing by$\sqrt{d\_k}$is to prevent softmax from becoming saturated due to the large dot product.
+\end{itemize}
+\end{formula}
+
+\subsection{intuitive analogy: library search}
+
+Imagine a situation where you are looking for a book in a library. Go to the library with the information you want (query$Q$). Each book has a title and keywords (key$K$), and content (value$V$). The library system compares your query to the key of each book, calculates the similarity, and provides an answer by weighted sum of the contents of the most similar books.
+
+Attention is what makes this process differentiable. ``Similarity'' is performed as a dot product, and ``weighted summation'' is performed as a softmax weight.
+
+\section{Q, K, VWhere does it come from?}
+
+In transformers,$Q, K, V$are all created as linear transformations from the same input$x$.
+
+\[
+Q = x W\_Q, \quad K = x W\_K, \quad V = x W\_V
+\]
+
+Here,$W\_Q, W\_K, W\_V$is a learnable matrix. This way, you can learn three perspectives on the same input: ``Question'', ``Label'', and ``Content''.
+
+\begin{infobox}[Why three different matrices?]
+The reason for converting to$W\_Q, W\_K, W\_V$instead of using the same$x$three times is because of ``role division''. The query should express ``what to look for'', the key should express ``what is there'', and the value should express ``the actual content''. It is difficult to play all three roles with the same vector. Through linear transformation, it is projected into a ``representation space'' suitable for each role.
+\end{infobox}
+
+\section{scaling: why   --  Divide by?}
+
+$Q \cdot K^T$is the dot product of$d\_k$dimension vectors.  When$d\_k$is large, the inner product value becomes large.  If the elements of$Q, K$have mean 0 and variance 1, the variance of the dot product$\sum\_{i=1}^{d\_k} Q\_i K\_i$is$d\_k$.
+
+When the dot product is large, the softmax output approaches one-hot (one value is 1, the other is 0). When this happens, the gradient becomes almost 0 and learning stops.  When divided by$\sqrt{d\_k}$, the variance becomes 1 and softmax is distributed smoothly.
+
+\begin{formula}[Effect of scaling]
+\[
+\text{softmax}\left(\frac{Q K^T}{\sqrt{d\_k}}\right) \quad \text{vs} \quad \text{softmax}(Q K^T)
+\]
+Without scaling, when$d\_k = 64$, the inner product value can go up to$\pm 64$, so softmax is saturated. Scaling reduces it to the$\pm 8$range, resulting in a smooth distribution.
+\end{formula}
+
+\section{Scaled Dot-Product Attention avatar}
+
+Let's start with the most basic form. Using PyTorch 2.0's\code{F.scaled\_dot\_product\_attention}(SDPA), it is memory efficient and fast.
+
+\begin{lstlisting}[language=Python]
+import torch
+import torch.nn.functional as F
+
+class ScaledDotProductAttention(nn.Module):
+    def __init__(self, dropout: float = 0.0):
+        super().__init__()
+        self.dropout_p = dropout
+
+    def forward(self, q, k, v, mask=None):
+        # q, k, v: [batch, n_heads, seq, d_head]
+        # mask: [batch, 1, seq, seq] or [seq, seq]
+        out = F.scaled_dot_product_attention(
+            q, k, v, attn_mask=mask,
+            dropout_p=self.dropout_p if self.training else 0.0,
+        )
+        return out
+\end{lstlisting}
+
+SDPA is optimized at the C++ level, making it dozens of times faster than directly implementing softmax with a Python loop. It also automatically utilizes the latest algorithms such as Flash Attention.
+
+\begin{notebox}[Flash Attention]
+Flash Attention (Dao et al. 2022) is an algorithm that redesigns attention calculation to fit the GPU memory hierarchy, reducing memory access and improving speed by 2$\sim$4 times. SDPA in PyTorch 2.0 automatically enables Flash Attention. We benefit from one line\code{F.scaled\_dot\_product\_attention}without having to implement it ourselves.
+\end{notebox}
+
+\section{causal mask (Causal Mask)}
+
+In an autoregressive language model, you should not look to the ``future''. This means that you should not look at token$t+1, t+2, \dots$when predicting token$t$. For this purpose, the upper triangle (above the main diagonal) of the attention score matrix is ​​masked with$-\infty$so that it becomes 0 after softmax.
+
+\begin{lstlisting}[language=Python]
+def make_causal_mask(seq_len: int, device="cpu") -> torch.Tensor:
+    """Lower triangle mask. future tokens -infMasking with."""
+    mask = torch.full((seq_len, seq_len), float("-inf"), device=device)
+    mask = torch.triu(mask, diagonal=1)  # above the main diagonal -infas
+    return mask
+\end{lstlisting}
+
+\begin{figure}[htbp]
+\centering
+\begin{tikzpicture}[
+  scale=0.7,
+  every node/.style={font=\small\sffamily}
+]
+  % 5x5 mask visualization
+  \foreach \i in {0, 1, 2, 3, 4} {
+    \foreach \j in {0, 1, 2, 3, 4} {
+      \pgfmathsetmacro{\val}{ifthenelse(\j <= \i, "0", "-inf")}
+      \pgfmathsetmacro{\col}{ifthenelse(\j <= \i, "inkblue!10", "inkred!15")}
+      \node[draw=inkgray, fill=\col, minimum size=0.8cm] at (\j*0.8, -\i*0.8) {\val};
+    }
+  }
+  % label
+  \node[inkgray, anchor=east] at (-0.5, 0) {token 0};
+  \node[inkgray, anchor=east] at (-0.5, -3.2) {token 4};
+  \node[inkgray, anchor=south] at (0, 0.5) {token 0};
+  \node[inkgray, anchor=south] at (3.2, 0.5) {token 4};
+\end{tikzpicture}
+\caption{Causal Mask (5  --  5). blue = Allow attention (0), red = Block future tokens (  -- 1 --  ). line   -- 2 --  is a token   -- 3 --  heating   -- 4 --   Indicates how much attention will be paid to the token.}
+\label{fig:causal-mask}
+\end{figure}
+
+When the mask is added to the attention score, the score of the masked location becomes$-\infty$, and after softmax, it becomes 0. In other words,$V$of future tokens will not contribute to the output.
+
+\subsection{why   --  impression?}
+
+In softmax's formula,$\text{softmax}(x\_i) = e^{x\_i} / \sum\_j e^{x\_j}$, if$x\_i = -\infty$, it becomes$e^{-\infty} = 0$. Therefore, the weight of the masked position becomes exactly 0. This is different from simply adding 0: adding 0 leaves the original score intact, which is still positive after softmaxing.
+
+\section{Multi-Head Attention}
+
+A single attention can only learn one ``viewpoint''. But there are many different relationships in language: grammatical relationships (subject-verb), semantic relationships (synonyms, antonyms), discourse relationships (denotative reference resolution), etc.\keyterm{Multi-head attention (Multi-Head Attention)}divides it into multiple heads and processes it in parallel.
+
+\subsection{idea}
+
+The$d\_{model}$dimension is divided into$h$heads, and each head independently performs attention in the$d\_{head} = d\_{model}/h$dimension. For example, if$d\_{model}=512, h=8$then$d\_{head}=64$.
+
+\begin{formula}[Multi-Head Attention]
+\[
+\text{MHA}(x) = \text{Concat}(\text{head}\_1, \dots, \text{head}\_h) W\_O
+\]
+\[
+\text{head}\_i = \text{Attention}(Q W\_Q^i, K W\_K^i, V W\_V^i)
+\]
+Concatenate the output of each head and linearly convert it to$W\_O$.
+\end{formula}
+
+\subsection{Why split the head?}
+
+Single attention with$d\_{model} = 512$and multihead attention with$d\_{head} = 64, h = 8$have the same total number of parameters. However, in multi-head, each head can learn different patterns. for example:
+\begin{itemize}
+\item Head 1: Subject-verb relationship
+\item Head 2: Adjective-Noun Modification
+\item Head 3: Directive Reference
+\item Head 4: Sentence boundaries
+\end{itemize}
+
+If you actually visualize attention heads (e.g. BertViz), you can see that different heads pay attention to distinctly different patterns.
+
+\begin{figure}[htbp]
+\centering
+\begin{tikzpicture}[
+  every node/.style={font=\small\sffamily},
+  box/.style={draw=inkblue, fill=inkblue!8, rounded corners=2pt, minimum width=2.2cm, minimum height=0.6cm},
+  head/.style={draw=inkred, fill=inkred!10, rounded corners=2pt, minimum width=1.6cm, minimum height=0.5cm, font=\scriptsize\sffamily}
+]
+  \node[box] (in) at (0, 0) {input [batch, seq, d\_model]};
+  \node[box, below=0.5cm of in] (qkv) {QKV proj $\to$ split};
+  % heads
+  \node[head] (h1) at (-3, -2) {head 1};
+  \node[head] (h2) at (-1, -2) {head 2};
+  \node[inkgray, font=\scriptsize] at (1, -2) {$\cdots$};
+  \node[head] (h3) at (3, -2) {head h};
+  \node[box, below=0.6cm of $(h1)!0.5!(h3)$] (cat) {Concat $\to$ O proj};
+  \node[box, below=0.4cm of cat] (out) {output [batch, seq, d\_model]};
+
+  \draw[-{Stealth[length=4pt]}, inkblue] (in) -- (qkv);
+  \draw[-{Stealth[length=4pt]}, inkblue] (qkv) -- (h1);
+  \draw[-{Stealth[length=4pt]}, inkblue] (qkv) -- (h2);
+  \draw[-{Stealth[length=4pt]}, inkblue] (qkv) -- (h3);
+  \draw[-{Stealth[length=4pt]}, inkblue] (h1) -- (cat);
+  \draw[-{Stealth[length=4pt]}, inkblue] (h2) -- (cat);
+  \draw[-{Stealth[length=4pt]}, inkblue] (h3) -- (cat);
+  \draw[-{Stealth[length=4pt]}, inkblue] (cat) -- (out);
+\end{tikzpicture}
+\caption{Multi-Head Attention structure. input   --  Split into two heads, perform parallel attention, and then merge.}
+\label{fig:mha}
+\end{figure}
+
+\subsection{avatar}
+
+For efficiency, calculate$Q, K, V$at once. The input$x$is projected into the$3 d\_{model}$dimension and then divided by head.
+
+\begin{lstlisting}[language=Python]
+class MultiHeadAttention(nn.Module):
+    def __init__(self, config: ModelConfig):
+        super().__init__()
+        self.d_model = config.d_model
+        self.n_heads = config.n_heads
+        self.d_head = config.d_model // config.n_heads
+        # Q, K, VCompute at once (combined projection)
+        self.qkv_proj = nn.Linear(config.d_model, 3 * config.d_model, bias=config.use_bias)
+        self.o_proj = nn.Linear(config.d_model, config.d_model, bias=config.use_bias)
+        self.attention = ScaledDotProductAttention(dropout=config.dropout)
+        self.dropout = nn.Dropout(config.dropout)
+
+    def forward(self, x, mask=None):
+        batch, seq, _ = x.shape
+        # [batch, seq, 3*d_model] -> [batch, seq, 3, n_heads, d_head]
+        qkv = self.qkv_proj(x).view(batch, seq, 3, self.n_heads, self.d_head)
+        # [3, batch, n_heads, seq, d_head]
+        qkv = qkv.permute(2, 0, 3, 1, 4)
+        q, k, v = qkv[0], qkv[1], qkv[2]
+
+        if mask is not None and mask.dim() == 2:
+            mask = mask.unsqueeze(0).unsqueeze(0)  # [1, 1, seq, seq]
+
+        # Attention: [batch, n_heads, seq, d_head]
+        attn_out = self.attention(q, k, v, mask=mask)
+        # Merge Heads: [batch, seq, d_model]
+        attn_out = attn_out.transpose(1, 2).contiguous().view(batch, seq, self.d_model)
+        return self.dropout(self.o_proj(attn_out))
+\end{lstlisting}
+
+\begin{notebox}[Why calculate QKV all at once?]
+The reason for using one\code{nn.Linear}with\code{3 * d\_model}output instead of three separate\code{nn.Linear}is efficiency. GPUs are optimized for performing large matrix operations at once. One large operation is faster than three small operations. Partitioning is performed without memory reorganization with\code{view + permute}.
+\end{notebox}
+
+\section{causality test}
+
+The most important test of the attention module is whether the causal mask actually blocks future tokens. The following test verifies this.
+
+\begin{lstlisting}[language=Python]
+def test_attention_is_causal(small_config):
+    """location i의 출력이 location i+Should not be affected after 1."""
+    attn = MultiHeadAttention(small_config)
+    attn.eval()
+    x = torch.randn(1, 6, small_config.d_model)
+    mask = make_causal_mask(6)
+    out1 = attn(x, mask=mask)
+    # xEven if you change the last position of , the output of the previous position should not change.
+    x2 = x.clone()
+    x2[:, -1] = torch.randn(1, small_config.d_model)
+    out2 = attn(x2, mask=mask)
+    # The first five positions must be identical
+    assert torch.allclose(out1[:, :5], out2[:, :5], atol=1e-5)
+\end{lstlisting}
+
+If this test passes, you can be confident that the causal mask is working correctly. If it fails, the mask is upside down or the dimensions are wrong.
+
+\section{Self-Attention vs Cross-Attention}
+
+The implementation in this chapter is\keyterm{Self attention (self-attention)}, where$Q, K, V$all come from the same sequence. The decoder in the translation model also uses\keyterm{Cross attention (cross-attention)}, where$Q$comes from the decoder and$K, V$comes from the encoder. GPT is a decoder only structure, so it uses only self-attention.
+
+\subsection{How is cross-attention different??}
+
+In cross attention, they are$Q = x\_{dec} W\_Q$,$K = x\_{enc} W\_K$, and$V = x\_{enc} W\_V$. Each position in the decoder refers to every position in the encoder output. In translation, this is the process of finding the corresponding word in the original text when the decoder generates the ``sentence to be translated.''
+
+GPT does not have this cross attention. Predict the next token using only self-attention. This is why GPT is called a ``decoder only'' model.
+
+\section{Attention calculation volume analysis}
+
+The calculation amount of attention is$O(L^2 \cdot d)$.$L$is the sequence length. As the sequence becomes longer, it increases as a square.
+
+\begin{center}
+\begin{tabularx}{\textwidth}{lXX}
+\toprule
+\textbf{sequence length}&\textbf{Attention matrix size}&\textbf{FP16 memories (single head)}\\
+\midrule
+512 & $512 \times 512$ & 0.5 MB \\
+2048 & $2048 \times 2048$ & 8 MB \\
+8192 & $8192 \times 8192$ & 128 MB \\
+32768 & $32768 \times 32768$ & 2 GB \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+This is why processing long contexts is difficult. Volume 2, Chapter 7 covers how to reduce this cost with KV cache and PagedAttention.
+
+\section{practice: Attention weight visualization}
+
+By visualizing the attention weight of the trained model, you can see what patterns the model pays attention to.
+
+\begin{lstlisting}[language=Python]
+import matplotlib.pyplot as plt
+import math
+from makellm.model.attention import make_causal_mask
+
+# Manual calculation and visualization of attention weights (SDPAmanages the weights only internally, so calculate them directly when debugging)
+model.eval()
+with torch.no_grad():
+    x = torch.randn(1, 10, model.config.d_model) # [batch=1, seq=10, d_model]
+    x_norm = model.blocks[-1].ln1(x)
+    qkv = model.blocks[-1].attn.qkv_proj(x_norm)
+    batch, seq, _ = x.shape
+    qkv = qkv.view(batch, seq, 3, model.config.n_heads, model.config.d_head).permute(2, 0, 3, 1, 4)
+    q, k = qkv[0], qkv[1]  # [1, n_heads, seq, d_head]
+    
+    # Calculate the weight of the 0th head: (Q @ K^T) / sqrt(d_head)
+    scores = (q[0, 0] @ k[0, 0].T) / math.sqrt(model.config.d_head)
+    mask = make_causal_mask(seq)
+    attn_weights = torch.softmax(scores + mask, dim=-1)  # [seq, seq]
+
+plt.imshow(attn_weights.numpy(), cmap='viridis')
+plt.colorbar()
+plt.xlabel('key position')
+plt.ylabel('query position')
+plt.title('Attention weights (head 0, last layer)')
+\end{lstlisting}
+
+\section{summation}
+
+\begin{itemize}
+\item Attention is an operation that weights and adds values ​​based on query-key similarity.
+\item Prevent softmax saturation by scaling to $\sqrt{d\_k}$.
+\item It becomes an autoregressive model by blocking future tokens with a causal mask.
+\item Multihead learns various relationships by dividing$d\_{model}$into$h$heads.
+\item Maximize GPU efficiency by calculating QKV at once.
+\item By utilizing PyTorch 2.0’s SDPA, optimized attention can be used in one line.
+\item Attention calculation amount is$O(L^2)$, which is a bottleneck in long sequences.
+\end{itemize}
+
+\section{practice problems}
+
+\begin{enumerate}
+\item $\sqrt{d\_k}$How does learning change if scaling is removed?  Calculate the distribution of softmax output when$d\_k = 64$.
+\item What happens if you don’t put on a causal mask? Explain each during learning and inference.
+\item If the number of heads$h$is set to 1 (single head), what is the difference from multi-head?
+\item What happens if we make the number of heads$h$equal to$d\_{model}$(i.e.$d\_{head} = 1$)?
+\item Calculate how much the memory of attention matrix$L \times L$is when$L = 100,000$(based on FP16).
+\end{enumerate}
+
+In the next chapter, we will assemble the transformer block including this attention. The combination of attention + FFN + residual + LayerNorm creates a transformer.

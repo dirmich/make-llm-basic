@@ -1,0 +1,95 @@
+\chapter{수학 기초 보충}
+\label{app:math}
+
+이 부록에서는 본문에서 사용한 수학적 개념을 보충 설명한다. 미적분과 기초 선형대수를 알지만 행렬 미분 등에 익숙하지 않은 독자를 위한 참고 자료다.
+
+\section{벡터와 행렬}
+
+\keyterm{벡터}는 숫자의 1차원 배열이다. $\mathbf{x} = [x_1, x_2, \dots, x_n]^T$로 표기. \keyterm{행렬}은 2차원 배열. $A \in \mathbb{R}^{m \times n}$은 $m$행 $n$열.
+
+\begin{itemize}
+  \item \textbf{내적(dot product)}: $\mathbf{a} \cdot \mathbf{b} = \sum_i a_i b_i$. 스칼라 반환.
+  \item \textbf{행렬곱}: $C = AB$ where $C_{ij} = \sum_k A_{ik} B_{kj}$.
+  \item \textbf{전치(transpose)}: $A^T$는 행과 열을 바꿈.
+  \item \textbf{norm}: $\|\mathbf{x}\|_2 = \sqrt{\sum_i x_i^2}$. 벡터의 길이.
+\end{itemize}
+
+\section{Softmax}
+
+\keyterm{Softmax}는 임의의 실수 벡터를 확률 분포로 변환하는 함수다.
+
+\begin{formula}[Softmax]
+\[
+\text{softmax}(x_i) = \frac{e^{x_i}}{\sum_j e^{x_j}}
+\]
+출력의 모든 원소는 0과 1 사이이며, 합은 1이다. 어텐션 가중치, 분류 모델의 출력 등에 사용.
+\end{formula}
+
+\section{Cross-Entropy}
+
+\keyterm{교차 엔트로피(cross-entropy)}는 두 확률 분포 $p, q$ 사이의 차이를 측정한다.
+
+\begin{formula}[Cross-Entropy]
+\[
+H(p, q) = -\sum_i p_i \log q_i
+\]
+분류 문제에서 $p$는 정답 원-핫 벡터, $q$는 모델 예측 softmax 출력. 단일 정답 $y$에 대해 $H = -\log q_y$로 단순화.
+\end{formula}
+
+\section{연쇄 법칙과 Backpropagation}
+
+\keyterm{연쇄 법칙(chain rule)}은 합성 함수의 미분법이다.
+
+\[
+\frac{d}{dx} f(g(x)) = f'(g(x)) \cdot g'(x)
+\]
+
+신경망은 합성 함수의 연속이므로, 연쇄 법칙을 통해 입력에서 출력까지의 미분을 계산할 수 있다. 이것이 \keyterm{backpropagation}의 수학적 기반이다.
+
+PyTorch는 이 과정을 자동화(autograd)하므로, 우리가 직접 미분 식을 유도할 필요는 없다. 하지만 ``어떤 파라미터가 손실에 얼마나 영향을 미치는가''를 이해하려면 연쇄 법칙의 개념은 알아야 한다.
+
+\section{행렬 미분}
+
+손실 $\mathcal{L}$이 행렬 $W$에 의존할 때, $\partial \mathcal{L} / \partial W$는 $W$와 같은 shape의 행렬이며, 각 원소는 $\partial \mathcal{L} / \partial W_{ij}$다.
+
+\keyterm{Jacobian}은 벡터 함수의 미분을 나타내는 행렬이다. $\mathbf{y} = f(\mathbf{x})$일 때 $J_{ij} = \partial y_i / \partial x_j$.
+
+자세한 내용은 ``The Matrix Cookbook''(Petersen \& Pedersen)을 참고하라.
+
+\section{정규 분포}
+
+\keyterm{정규 분포(normal distribution)} $\mathcal{N}(\mu, \sigma^2)$의 확률 밀도 함수:
+
+\[
+p(x) = \frac{1}{\sqrt{2\pi\sigma^2}} \exp\left(-\frac{(x-\mu)^2}{2\sigma^2}\right)
+\]
+
+가중치 초기화에 자주 사용된다. $\mu=0, \sigma = 1/\sqrt{d}$를 쓰면 입력 차원이 커져도 출력 분산이 일정하게 유지된다 (Xavier 초기화의 기본 아이디어).
+
+\section{정보 이론 기초}
+
+\keyterm{엔트로피(entropy)}는 확률 분포의 ``무작위성''을 측정한다.
+
+\[
+H(p) = -\sum_i p_i \log p_i
+\]
+
+\keyterm{KL 발산(KL divergence)}은 두 분포의 차이:
+
+\[
+D_{KL}(p \| q) = \sum_i p_i \log \frac{p_i}{q_i}
+\]
+
+Cross-entropy는 $H(p) + D_{KL}(p \| q)$로 분해된다. $H(p)$가 고정이므로 cross-entropy를 최소화하는 것은 $D_{KL}$을 최소화하는 것과 같다.
+
+\section{최적화 기초}
+
+\keyterm{경사 하강법(gradient descent)}: 손실을 줄이는 방향으로 파라미터를 갱신.
+
+\[
+\theta \leftarrow \theta - \eta \nabla_\theta \mathcal{L}
+\]
+
+$\eta$는 학습률. \keyterm{Adam}은 모멘텀과 적응적 학습률을 결합한 최적화 알고리즘이다. \keyterm{AdamW}는 Adam에 weight decay를 결합한 버전으로 LLM 학습의 표준이다.
+
+자세한 유도는 Goodfellow et al. ``Deep Learning'' 4$\sim$8장을 참고하라.

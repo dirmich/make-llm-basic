@@ -1,0 +1,379 @@
+\chapter{텍스트 생성 — 샘플링 전략과 디코딩}
+\label{ch:generation}
+
+이 장에서는 학습된 GPT 모델로 텍스트를 생성하는 과정을 구현한다. 단순한 greedy 디코딩부터 Top-K, Top-P, Temperature 샘플링까지 다양한 전략을 다룬다.
+
+\section{자기회귀 생성의 원리}
+
+언어 모델의 생성은 \keyterm{자기회귀(autoregressive)} 방식으로 이루어진다. 즉, 한 번에 토큰 하나씩 생성하고, 그 토큰을 다시 입력에 추가하여 다음 토큰을 생성하는 과정을 반복한다.
+
+\begin{enumerate}
+  \item 프롬프트 $[w_1, \dots, w_k]$로 시작.
+  \item 모델에 넣어 다음 토큰 분포 $P(w_{k+1} | w_1, \dots, w_k)$를 얻음.
+  \item 분포에서 $w_{k+1}$을 샘플링 (또는 argmax).
+  \item 시퀀스에 추가: $[w_1, \dots, w_k, w_{k+1}]$.
+  \item 종료 조건(<eos> 또는 최대 길이)까지 2$\sim$4 반복.
+\end{enumerate}
+
+\begin{figure}[htbp]
+\centering
+\begin{tikzpicture}[
+  every node/.style={font=\small\sffamily},
+  tok/.style={draw=inkblue, fill=inkblue!8, minimum width=0.7cm, minimum height=0.6cm},
+  newtok/.style={draw=inkred, fill=inkred!10, minimum width=0.7cm, minimum height=0.6cm},
+  model/.style={draw=inkgray, fill=inkgray!10, rounded corners=2pt, minimum width=2cm, minimum height=0.7cm}
+]
+  % step 1
+  \node[tok] (a1) at (0, 0) {The};
+  \node[tok, right=0.05cm of a1] (a2) {cat};
+  \node[model, right=0.5cm of a2] (m1) {model};
+  \node[newtok, right=0.5cm of m1] (n1) {sat};
+  \node[inkgray, anchor=south, font=\scriptsize] at (1.5, 0.5) {step 1};
+
+  % step 2
+  \node[tok] (b1) at (0, -1.5) {The};
+  \node[tok, right=0.05cm of b1] (b2) {cat};
+  \node[tok, right=0.05cm of b2] (b3) {sat};
+  \node[model, right=0.5cm of b3] (m2) {model};
+  \node[newtok, right=0.5cm of m2] (n2) {on};
+  \node[inkgray, anchor=south, font=\scriptsize] at (1.5, -1) {step 2};
+
+  % step 3
+  \node[tok] (c1) at (0, -3) {The};
+  \node[tok, right=0.05cm of c1] (c2) {cat};
+  \node[tok, right=0.05cm of c2] (c3) {sat};
+  \node[tok, right=0.05cm of c3] (c4) {on};
+  \node[model, right=0.5cm of c4] (m3) {model};
+  \node[newtok, right=0.5cm of m3] (n3) {the};
+  \node[inkgray, anchor=south, font=\scriptsize] at (1.5, -2.5) {step 3};
+
+  \draw[-{Stealth[length=4pt]}, inkblue] (a2) -- (m1);
+  \draw[-{Stealth[length=4pt]}, inkblue] (m1) -- (n1);
+  \draw[-{Stealth[length=4pt]}, inkblue] (b3) -- (m2);
+  \draw[-{Stealth[length=4pt]}, inkblue] (m2) -- (n2);
+  \draw[-{Stealth[length=4pt]}, inkblue] (c4) -- (m3);
+  \draw[-{Stealth[length=4pt]}, inkblue] (m3) -- (n3);
+\end{tikzpicture}
+\caption{자기회귀 생성 과정. 매 스텝마다 이전 토큰들을 모델에 넣고 다음 토큰을 예측.}
+\label{fig:autoregressive}
+\end{figure}
+
+\section{Greedy 샘플링}
+
+가장 단순한 전략은 매 스텝 가장 확률이 높은 토큰을 선택하는 것이다.
+
+\begin{lstlisting}[language=Python]
+class GreedySampler:
+    def __call__(self, logits: torch.Tensor) -> torch.Tensor:
+        # logits: [batch, vocab_size] -> token_ids: [batch]
+        return torch.argmax(logits, dim=-1)
+\end{lstlisting}
+
+Greedy는 결정론적이고 빠르지만, 매번 같은 토큰만 선택하여 단조로운 텍스트가 나오는 경향이 있다. ``The cat sat on the mat. The cat sat on the mat. The cat...'' 같은 반복에 빠지기 쉽다.
+
+\begin{warnbox}[Greedy의 함정: 반복 루프]
+Greedy 디코딩은 ``안전한'' 토큰만 선택하여 재미없는 텍스트를 만든다. 더 심한 문제는 반복 루프에 빠진다는 것이다. ``I went to the store to buy some store to buy some store to buy...'' 같은 현상.
+
+이유: 모델이 ``store'' 다음에 ``to buy''를 높은 확률로 예측하고, ``to buy'' 다음에 ``some store''를 높은 확률로 예측하는 루프가 형성되면, greedy는 거기서 빠져나오지 못한다.
+\end{warnbox}
+
+\section{Temperature 샘플링}
+
+분포의 ``날카로움''을 조절하는 파라미터를 도입한다. 로짓을 온도 $T$로 나눈 후 softmax.
+
+\begin{formula}[Temperature Sampling]
+\[
+P_T(w) = \frac{\exp(\text{logit}(w) / T)}{\sum_{w'} \exp(\text{logit}(w') / T)}
+\]
+\begin{itemize}
+  \item $T < 1$: 분포가 날카로워짐 (greedy에 가까워짐)
+  \item $T > 1$: 분포가 평평해짐 (더 무작위)
+  \item $T = 1$: 원래 분포
+\end{itemize}
+\end{formula}
+
+\begin{lstlisting}[language=Python]
+class TemperatureSampler:
+    def __init__(self, temperature: float = 1.0):
+        assert temperature > 0
+        self.temperature = temperature
+
+    def __call__(self, logits):
+        probs = F.softmax(logits / self.temperature, dim=-1)
+        return torch.multinomial(probs, num_samples=1).squeeze(-1)
+\end{lstlisting}
+
+\begin{figure}[htbp]
+\centering
+\begin{tikzpicture}[
+  scale=0.8,
+  every node/.style={font=\small\sffamily}
+]
+  % T=0.5 (날카로움)
+  \begin{scope}[shift={(0, 0)}]
+    \node[inkblue, font=\bfseries\sffamily] at (3, 3.5) {T=0.5 (날카로움)};
+    \foreach \i/\h in {0/0.3, 1/0.5, 2/3.0, 3/0.4, 4/0.2, 5/0.1, 6/0.05} {
+      \draw[inkblue, fill=inkblue!50] (\i*0.5, 0) rectangle (\i*0.5+0.4, \h);
+    }
+    \node[inkgray, font=\scriptsize, anchor=north] at (1.75, -0.1) {token};
+  \end{scope}
+
+  % T=1.0 (원본)
+  \begin{scope}[shift={(5, 0)}]
+    \node[inkblue, font=\bfseries\sffamily] at (3, 3.5) {T=1.0 (원본)};
+    \foreach \i/\h in {0/0.5, 1/0.8, 2/1.8, 3/1.2, 4/0.7, 5/0.4, 6/0.2} {
+      \draw[inkblue, fill=inkblue!50] (\i*0.5, 0) rectangle (\i*0.5+0.4, \h);
+    }
+  \end{scope}
+
+  % T=2.0 (평평)
+  \begin{scope}[shift={(10, 0)}]
+    \node[inkblue, font=\bfseries\sffamily] at (3, 3.5) {T=2.0 (평평)};
+    \foreach \i/\h in {0/0.8, 1/0.9, 2/1.2, 3/1.0, 4/0.85, 5/0.7, 6/0.6} {
+      \draw[inkblue, fill=inkblue!50] (\i*0.5, 0) rectangle (\i*0.5+0.4, \h);
+    }
+  \end{scope}
+\end{tikzpicture}
+\caption{Temperature에 따른 분포 변화. T가 낮으면 분포가 날카로워져 greedy에 가까워지고, T가 높으면 평평해져 무작위성이 증가.}
+\label{fig:temperature}
+\end{figure}
+
+\section{Top-K 샘플링}
+
+확률이 낮은 토큰이 선택되는 것을 방지하기 위해, 상위 $K$개 토큰만 고려한다.
+
+\begin{lstlisting}[language=Python]
+class TopKSampler:
+    def __init__(self, k: int = 50, temperature: float = 1.0):
+        self.k = k
+        self.temperature = temperature
+
+    def __call__(self, logits):
+        scaled = logits / self.temperature
+        top_values, top_indices = torch.topk(scaled, self.k, dim=-1)
+        probs = F.softmax(top_values, dim=-1)
+        sampled = torch.multinomial(probs, num_samples=1).squeeze(-1)
+        return top_indices.gather(-1, sampled.unsqueeze(-1)).squeeze(-1)
+\end{lstlisting}
+
+\subsection{Top-K의 직관}
+
+로짓 분포에서 ``꼬리''(확률이 매우 낮은 토큰)를 잘라낸다. 예를 들어 어휘가 5만 개일 때, 상위 50개만 고려하면 99.99\%의 확률 질량을 가진 토큰들 중에서 샘플링하는 셈이다.
+
+Top-K = 1이면 greedy와 동일. Top-K = $V$ (어휘 크기)면 temperature 샘플링과 동일.
+
+\section{Top-P (Nucleus) 샘플링}
+
+Top-K는 $K$를 고정하지만, Top-P는 분포 형태에 따라 고려하는 토큰 수를 동적으로 조절한다. 누적 확률이 $P$가 될 때까지의 토큰만 고려한다.
+
+\begin{lstlisting}[language=Python]
+class TopPSampler:
+    def __init__(self, p: float = 0.9, temperature: float = 1.0):
+        self.p = p
+        self.temperature = temperature
+
+    def __call__(self, logits):
+        scaled = logits / self.temperature
+        probs = F.softmax(scaled, dim=-1)
+        sorted_probs, sorted_indices = torch.sort(probs, descending=True, dim=-1)
+        cumulative = torch.cumsum(sorted_probs, dim=-1)
+        # P를 넘는 위치부터 마스킹
+        sorted_mask = cumulative - sorted_probs > self.p
+        sorted_probs = sorted_probs.masked_fill(sorted_mask, 0.0)
+        sorted_probs = sorted_probs / sorted_probs.sum(dim=-1, keepdim=True).clamp(min=1e-10)
+        sampled = torch.multinomial(sorted_probs, num_samples=1).squeeze(-1)
+        return sorted_indices.gather(-1, sampled.unsqueeze(-1)).squeeze(-1)
+\end{lstlisting}
+
+\begin{figure}[htbp]
+\centering
+\begin{tikzpicture}[
+  scale=0.7,
+  every node/.style={font=\small\sffamily}
+]
+  % Top-K 시각화 (왼쪽)
+  \begin{scope}[shift={(0, 0)}]
+    \node[inkblue, font=\bfseries] at (3, 4.5) {Top-K (K=5)};
+    \foreach \i/\h/\sel in {0/2.0/1, 1/3.5/1, 2/1.5/1, 3/0.8/1, 4/2.8/1,
+                             5/0.3/0, 6/0.2/0, 7/0.15/0, 8/0.1/0, 9/0.05/0} {
+      \pgfmathsetmacro{\col}{ifthenelse(\sel == 1, "inkblue!50", "inkgray!20")}
+      \draw[fill=\col, draw=inkblue] (\i*0.5, 0) rectangle (\i*0.5+0.4, \h);
+    }
+    \draw[inkred, dashed, line width=0.8pt] (2.5, 0) -- (2.5, 4);
+    \node[inkred, font=\scriptsize, anchor=west] at (2.6, 3.8) {K=5};
+  \end{scope}
+
+  % Top-P 시각화 (오른쪽)
+  \begin{scope}[shift={(8, 0)}]
+    \node[inkblue, font=\bfseries] at (3, 4.5) {Top-P (P=0.9)};
+    \foreach \i/\h/\sel in {0/2.0/1, 1/3.5/1, 2/1.5/1, 3/0.8/1, 4/2.8/1,
+                             5/0.3/1, 6/0.2/0, 7/0.15/0, 8/0.1/0, 9/0.05/0} {
+      \pgfmathsetmacro{\col}{ifthenelse(\sel == 1, "inkblue!50", "inkgray!20")}
+      \draw[fill=\col, draw=inkblue] (\i*0.5, 0) rectangle (\i*0.5+0.4, \h);
+    }
+    \node[inkred, font=\scriptsize, anchor=west] at (3.0, 3.8) {cumsum};
+    \node[inkred, font=\scriptsize, anchor=west] at (3.0, 3.4) {$\approx$ 0.9};
+  \end{scope}
+
+  % 축
+  \draw[inkblue, ->] (-0.5, 0) -- (5.5, 0) node[right, font=\scriptsize] {token};
+  \draw[inkblue, ->] (-0.5, 0) -- (-0.5, 4) node[above, font=\scriptsize] {prob};
+  \draw[inkblue, ->] (5.5, 0) -- (10.5, 0) node[right, font=\scriptsize] {token};
+\end{tikzpicture}
+\caption{Top-K vs Top-P. Top-K는 고정 개수를, Top-P는 누적 확률이 P가 될 때까지 선택.}
+\label{fig:topk-topp}
+\end{figure}
+
+\subsection{Top-K vs Top-P}
+
+\begin{center}
+\begin{tabularx}{\textwidth}{lXX}
+\toprule
+ & \textbf{Top-K} & \textbf{Top-P (Nucleus)} \\
+\midrule
+고려 토큰 수 & 고정 ($K$) & 동적 (분포에 따라) \\
+분포가 날카로울 때 & 너무 많은 토큰 고려 & 적은 토큰만 고려 (자동) \\
+분포가 평평할 때 & 너무 적게 고려 & 많은 토큰 고려 (자동) \\
+적응성 & 낮음 & 높음 \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+Top-P가 보통 더 자연스러운 결과를 낸다. 모델이 확신할 때는 적은 토큰만, 불확실할 때는 많은 토큰을 고려하기 때문.
+
+\section{샘플링 전략 비교}
+
+\begin{center}
+\begin{tabularx}{\textwidth}{lXXX}
+\toprule
+\textbf{전략} & \textbf{다양성} & \textbf{일관성} & \textbf{사례} \\
+\midrule
+Greedy & 낮음 & 높음 & 코드 생성, 수학 \\
+Temperature (T=0.7) & 중간 & 중간 & 일반적 용도 \\
+Top-K (K=50) & 중간 & 높음 & 챗봇 \\
+Top-P (P=0.9) & 중간 & 높음 & 챗봇, 창작 \\
+Top-P (P=0.95) & 높음 & 중간 & 창의적 글쓰기 \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+\section{생성 함수 구현}
+
+모든 샘플러를 결합한 \code{generate} 함수를 만든다.
+
+\begin{lstlisting}[language=Python]
+@torch.no_grad()
+def generate(model, tokenizer, prompt, max_new_tokens=50,
+             sampler=None, device="cpu", stop_on_eos=True):
+    if sampler is None:
+        sampler = GreedySampler()
+    model.eval()
+    model.to(device)
+    ids = tokenizer.encode(prompt, add_bos=True, add_eos=False)
+    input_ids = torch.tensor([ids], dtype=torch.long, device=device)
+    eos_id = tokenizer.special.eos_id
+    context_length = model.config.context_length
+
+    for _ in range(max_new_tokens):
+        # 컨텍스트 길이 제한
+        x = input_ids[:, -context_length:] if input_ids.shape[1] > context_length else input_ids
+        logits = model(x)
+        next_logits = logits[:, -1, :]  # 마지막 위치
+        next_id = sampler(next_logits)
+        input_ids = torch.cat([input_ids, next_id.unsqueeze(0)], dim=1)
+        if stop_on_eos and next_id.item() == eos_id:
+            break
+    return tokenizer.decode(input_ids[0].tolist())
+\end{lstlisting}
+
+\section{컨텍스트 길이 제한}
+
+모델은 학습 시 정해진 \code{context\_length}까지만 처리할 수 있다. 생성 도중 시퀀스가 이 길이를 초과하면 가장 오래된 토큰을 잘라낸다 (sliding window). 이는 근사치지만 작동한다. 2권에서는 이 한계를 극복하는 RoPE의 extrapolation 기법을 다룬다.
+
+\begin{warnbox}[Sliding Window의 문제]
+컨텍스트를 잘라내면 모델이 ``앞부분''을 잊어버린다. ``Once upon a time, there was a princess named Aurora. She lived in a castle. One day, [긴 설명] ... Aurora decided to''에서 앞부분을 잘라내면 ``Aurora''가 공주 이름이라는 맥락이 사라진다.
+
+해결책: 더 긴 컨텍스트 모델 사용 (RoPE extrapolation), 또는 요약하여 압축. 2권에서 다룬다.
+\end{warnbox}
+
+\section{샘플러 테스트}
+
+\begin{lstlisting}[language=Python]
+def test_greedy_picks_max():
+    sampler = GreedySampler()
+    logits = torch.tensor([[1.0, 3.0, 2.0, 0.5]])
+    out = sampler(logits)
+    assert out.item() == 1  # 가장 큰 값
+
+def test_top_k_limits_choices():
+    torch.manual_seed(0)
+    logits = torch.tensor([[1.0, 5.0, 4.0, 3.0, 0.1]])
+    sampler = TopKSampler(k=2, temperature=1.0)
+    for _ in range(20):
+        idx = sampler(logits).item()
+        assert idx in (1, 2)  # 항상 top-2 중 하나
+
+def test_top_p_limits_choices():
+    torch.manual_seed(0)
+    logits = torch.tensor([[0.0, 10.0, 9.0, 0.0, 0.0]])
+    sampler = TopPSampler(p=0.5, temperature=1.0)
+    for _ in range(20):
+        idx = sampler(logits).item()
+        assert idx == 1  # 가장 확률 높은 토큰만
+\end{lstlisting}
+
+\section{실습: 다양한 샘플링 비교}
+
+\code{scripts/tiny\_train.py} 데모를 실행하면 5가지 샘플링 전략의 출력을 비교할 수 있다.
+
+\begin{lstlisting}[style=bashstyle]
+cd make-llm-basic
+python scripts/tiny_train.py --epochs 5 --vocab 500
+\end{lstlisting}
+
+출력 예:
+\begin{lstlisting}[basicstyle=\ttfamily\footnotesize, backgroundcolor=\color{codebg}, frame=single]
+프롬프트: 'the'
+  [Greedy            ] the cat sat on the mat
+  [Temperature=0.5   ] the lazy dog sleeps
+  [Temperature=1.0   ] the brown fox jumps
+  [Top-K=10          ] the quick fox runs
+  [Top-P=0.9         ] the warm sun shines
+\end{lstlisting}
+
+\section{고급 디코딩 기법 (소개)}
+
+이 책에서 구현하지는 않지만, 실제 시스템에서 쓰이는 고급 기법들을 소개한다:
+
+\subsection{Beam Search}
+각 스텝에서 $K$개의 후보 시퀀스를 유지하며, 마지막에 가장 높은 점수의 시퀀스를 선택. 번역, 요약 등에 적합하지만, 챗봇에는 부적합 (다양성 부족).
+
+\subsection{Speculative Decoding}
+작은 ``초안'' 모델이 먼저 $K$개 토큰을 생성하면, 큰 모델이 병렬로 검증. 맞으면 $K$개를 한 번에 채택, 틀리면 처음부터. 처리량 2$\sim$3배 향상 가능.
+
+\subsection{Contrastive Search}
+반복을 피하면서도 일관성을 유지하는 최신 기법. 이전 토큰 표현과의 유사도로 패널티를 주어 다양한 토큰을 선택.
+
+\section{요약}
+
+\begin{itemize}
+  \item 자기회귀 생성은 한 번에 토큰 하나씩 생성하며 시퀀스를 확장.
+  \item Greedy: 가장 확률 높은 토큰. 단조로움, 반복 루프 위험.
+  \item Temperature: 분포의 날카로움을 조절. T 낮을수록 결정론적.
+  \item Top-K: 상위 K개만 고려. 간단하지만 비적응적.
+  \item Top-P: 누적 확률 P까지의 토큰만 고려. 분포에 적응적.
+  \item 컨텍스트 길이를 초과하면 가장 오래된 토큰을 잘라냄.
+  \item Speculative decoding, beam search 등 고급 기법도 존재.
+\end{itemize}
+
+\section{연습 문제}
+
+\begin{enumerate}
+  \item Greedy 디코딩이 반복 루프에 빠지는 이유를 분석하라. 어떤 분포일 때 루프가 잘 생기는가?
+  \item Temperature가 0에 가까워지면 greedy와 어떻게 다른가? 0이면 어떤 일이 일어나는가?
+  \item Top-K와 Top-P를 동시에 적용하면 어떤 효과가 있는가? (즉, Top-K 후보 중에서 Top-P 필터링)
+  \item 챗봇에는 어떤 샘플링이 가장 적합한가? 이유를 설명하라.
+  \item Speculative decoding이 빠른 이유는 무엇인가?
+\end{enumerate}
+
+이것으로 1권의 핵심 구현이 끝났다. 다음 장에서는 전체를 정리하고, 2권에서 다룰 고급 주제를 소개한다.

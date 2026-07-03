@@ -1,0 +1,58 @@
+\documentclass[11pt,a4paper,openany]{book}
+
+% 공유 프리앰블
+\input{shared/preamble.tex}
+
+% ====== 책 메타데이터 ======
+\hypersetup{
+  pdftitle={Make LLM-basic},
+  pdfauthor={dirmich},
+  pdfsubject={LLM 기초부터 직접 만드는 가이드},
+  pdfkeywords={LLM, PyTorch, Transformer, 딥러닝, NLP}
+}
+
+\begin{document}
+
+% ==================== 표지 ====================
+\input{chapters/cover.tex}
+
+\frontmatter
+
+% ==================== 목차 ====================
+\clearpage
+{\hypersetup{linkcolor=black}
+\tableofcontents
+}
+
+% ==================== 용어집 ====================
+\clearpage
+\input{chapters/glossary.tex}
+
+% ==================== 머리말 ====================
+\clearpage
+\input{chapters/preface.tex}
+
+\mainmatter
+
+% ==================== 본문 챕터 ====================
+\input{chapters/ch01_intro.tex}
+\input{chapters/ch02_setup.tex}
+\input{chapters/ch03_tokenizer.tex}
+\input{chapters/ch04_embedding.tex}
+\input{chapters/ch05_attention.tex}
+\input{chapters/ch06_transformer_block.tex}
+\input{chapters/ch07_gpt_training.tex}
+\input{chapters/ch08_generation.tex}
+\input{chapters/ch09_wrapup.tex}
+
+% ==================== 부록 ====================
+\appendix
+\input{chapters/appendix_a_math.tex}
+\input{chapters/appendix_b_code.tex}
+\input{chapters/appendix_c_faq.tex}
+\input{chapters/appendix_d_answers.tex}
+\input{chapters/appendix_e_preview.tex}
+
+\backmatter
+
+\end{document}

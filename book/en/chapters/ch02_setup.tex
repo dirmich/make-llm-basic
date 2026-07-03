@@ -1,0 +1,140 @@
+\chapter{Development environment settings}
+\label{ch:setup}
+
+In this chapter, we set up the necessary development environment prior to full-scale LLM implementation. Explore Python, PyTorch, and the book's code repository structure, and run your first ``Hello, LLM'' program.
+
+\section{tools needed}
+
+\begin{center}
+\begin{tabularx}{\textwidth}{lXl}
+\toprule
+\textbf{equipment}&\textbf{use}&\textbf{Recommended version}\\
+\midrule
+Python & implementation language & 3.10 or higher \\
+PyTorch & Deep Learning Framework & 2.0 or higher \\
+NumPy & Numerical Computing & 1.24 and higher \\
+pytest & unit test & 7.0+ \\
+git & version control & latest \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+GPU is optional. All code in this book is written to run on the CPU. However, for large-scale learning, CUDA-capable GPUs are strongly recommended. When discussing distributed learning in Volume 2, a multi-GPU environment is assumed.
+
+\section{PyTorch installation}
+
+PyTorch follows the installation guide on the official website. Choose the one that suits your environment between the CPU-only version and the CUDA version.
+
+\begin{lstlisting}[style=bashstyle]
+# CPU Only (all examples in this book are CPUoperation)
+pip install torch --index-url https://download.pytorch.org/whl/cpu
+
+# CUDA 12.1 Support (GPU when used)
+pip install torch --index-url https://download.pytorch.org/whl/cu121
+\end{lstlisting}
+
+To check installation, do the following:
+
+\begin{lstlisting}[language=Python]
+import torch
+print(torch.__version__)         # 2.x.x
+print(torch.cuda.is_available()) # GPU Availability
+\end{lstlisting}
+
+\section{repository structure}
+
+The code in this book has the following structure. The modules covered in each chapter are separated into separate files, so you can use only the parts you need.
+
+\begin{lstlisting}[style=bashstyle]
+make-llm-basic/
+  src/makellm/
+    __init__.py
+    tokenizer/              # Chapter 3: tokenizer
+      base.py
+      bpe.py
+      unigram.py
+    model/                  # 4-Chapter 6: model structure
+      embedding.py
+      attention.py
+      transformer_block.py
+      gpt.py
+    training/               # Chapter 7: learning
+      dataset.py
+      loss.py
+      optimizers.py
+      trainer.py
+    inference/              # Chapter 8: inference
+      sampler.py
+      generate.py
+    utils/                  # common utility
+      config.py
+      seed.py
+      logging.py
+  tests/                    # pytest unit testing
+  book/                     # of this book LaTeX sauce
+\end{lstlisting}
+
+\section{first example: Dealing with tensors}
+
+Before full-scale implementation, let’s review the basics of PyTorch tensors. Tensors operate almost identically to NumPy arrays, except that they support GPU operations and automatic differentiation.
+
+\begin{lstlisting}[language=Python]
+import torch
+
+# Tensor creation
+x = torch.randn(2, 3)         # Sampling from a standard normal distribution
+print(x.shape)                # torch.Size([2, 3])
+print(x.dtype)                # torch.float32
+
+# calculation
+y = x @ x.T                   # matrix multiplication: [2, 3] @ [3, 2] -> [2, 2]
+z = x.sum()                   # Sum of all elements (scalar)
+
+# automatic differentiation
+w = torch.randn(3, requires_grad=True)
+loss = (w * w).sum()          # L2 norm^2
+loss.backward()               # backward
+print(w.grad)                 # d(loss)/d(w) = 2*w
+\end{lstlisting}
+
+\begin{infobox}[Autograd]
+One of PyTorch's most powerful features. All operations performed on tensors are internally recorded as a ``computation graph'', and gradients for all parameters are automatically calculated\code{loss.backward()}once. There is no need to derive the differential equation ourselves. All models in this book rely on autograd.
+\end{infobox}
+
+\section{Ensure reproducibility}
+
+Deep learning experiments have a lot of randomness, so reproducibility is important. If you fix the seed, you can run the same code multiple times and get the same results.
+
+\begin{lstlisting}[language=Python]
+from makellm.utils import set_seed
+set_seed(42)  # Python, NumPy, PyTorch Set up your seeds in one step
+\end{lstlisting}
+
+This function calls Python's\code{random}, NumPy's\code{numpy.random}, and PyTorch's\code{torch.manual\_seed}. If CUDA exists, the CUDA seed is also set.
+
+\section{Run unit tests}
+
+The code for each chapter is provided with pytest-based unit tests. After modifying the code, be sure to run tests to make sure there are no regressions.
+
+\begin{lstlisting}[style=bashstyle]
+cd make-llm-basic
+pytest tests/ -v
+\end{lstlisting}
+
+\begin{lstlisting}[style=bashstyle, basicstyle=\ttfamily\small]
+========================= 48 passed in 2.47s =========================
+\end{lstlisting}
+
+If all 48 tests pass, the environment setup is complete.
+
+\section{summation}
+
+\begin{itemize}
+\item Installed PyTorch 2.x and pytest.
+\item I understand the repository structure: Code is separated by module in\code{src/makellm/}.
+\item We reviewed the basics of tensor operations and autograd.
+\item Use\code{set\_seed()}for reproducibility.
+\item You can run unit tests with \code{pytest tests/}.
+\end{itemize}
+
+In the next chapter, we will implement the tokenizer in earnest. This first conversion of text to numbers is the starting point for all LLMs.

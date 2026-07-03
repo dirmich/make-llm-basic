@@ -1,0 +1,161 @@
+\chapter{Practice Problem Solutions}
+\label{app:answers}
+
+This appendix provides answers to the text exercises. Please try it yourself and then check.
+
+\section{Chapter 1 Answers}
+
+\textbf{1-1.}Rate ChatGPT’s answer.
+
+Best answer: ``Language models are trained to predict next tokens, but with sufficiently large models and diverse data, they implicitly learn question-answer patterns. When the user inputs a question in the form of a question, the model generates the answer pattern that follows the question in the training data.''
+
+\textbf{1-2.}``The sun sets in the east...'' Next word probability.
+
+For humans, ``soaring'' is rated at over 99\%. Reasons: (1) everyday observation, (2) linguistic collocation (``rising from the east'' is a fixed expression), (3) strong constraints of context.
+
+\textbf{1-3.}N-gram sparsity problem.
+
+For N-gram to predict the next word ``polar bear dance'', the next word ``polar bear dance'' must have appeared in the training data. If this 3-gram has not been learned, the probability becomes 0, and general words such as ``more'' are recommended through smoothing.
+
+\textbf{1-4.}Why transformers are better than RNNs for parallel processing.
+
+RNN requires sequential processing because the calculation of point$t$depends on the hidden state of point$t-1$. Transformers process all positions simultaneously with attention, making them optimal for GPU parallelization.
+
+\textbf{1-5.}Chinchilla reference data scale.
+
+If the parameters are increased by 10 times, the data must also be increased by about 10 times (maintaining a 20 token/parameter ratio). In other words, a 10x model requires 200x data.
+
+\section{Chapter 3 Answers}
+
+\textbf{3-1.}What if we merge less frequent pairs?
+
+Patterns that do not appear frequently become tokens, making the vocabulary inefficient. When rare pairs like ``xz'' are merged, they result in tokens that are rarely used in actual text.
+
+\textbf{3-2.}Unigram penalty changed to\code{-5.0}.
+
+Since the penalty for substrings not in the vocabulary is small, Viterbi attempts segmentation more actively. As a result, the tendency to break down into many smaller tokens.
+
+\textbf{3-3.}Korean BPE, vocabulary 100 vs 1000.
+
+Vocabulary 100: Break down ``hello'' into tokens of 5 or more bytes. Very inefficient.
+Vocabulary 1000: Able to learn subwords such as ``hello'' and ``hello''. Significantly shortened sequence length.
+
+\textbf{3-4.}Viterbi length reduced to upper limit of 4.
+
+Tokens longer than 5 characters disappear. Words like ``hello'' are broken down into ``he'', ``ll'', and ``o'', increasing the sequence length.
+
+The need for\textbf{3-5.}\code{<bos>}.
+
+The model will work without it, but if you explicitly mark the beginning of a sequence, the model will recognize that ``a new sequence starts from here''. Also useful for distinguishing between multiple sequences during batch processing.
+
+\section{Chapter 4 Answers}
+
+\textbf{4-1.}When the embedding dimension is too small or large.
+
+If it is small (8): It is difficult to distinguish between words, making it impossible to learn semantic similarity.
+Larger (4096): risk of parameter explosion, running out of memory, and overfitting. Usually 256$\sim$4096 used.
+
+\textbf{4-2.}Sinusoidal constant 100$\to$100.
+
+As the cycle becomes shorter, it becomes difficult to distinguish even close locations. Lowered the ``resolution'' of location encoding.
+
+\textbf{4-3.}Scaling omitted.
+
+Location embeddings dominate token embeddings, causing the model to rely solely on location. Loss of semantic information.
+
+\textbf{4-4.}Learnable location embeddings, max\_len exceeded.
+
+An error occurred because the index was out of range. A method that allows extrapolation, such as RoPE, is needed.
+
+\textbf{4-5.}Change LayerNorm$\epsilon$value.
+
+If$\epsilon$is large, normalization becomes weak and output variance increases. If it is too small, the denominator will be close to 0, causing numerical instability.
+
+\section{Chapter 5 Answers}
+
+\textbf{5-1.}softmax when scaling is omitted.
+
+When$d\_k=64$, the inner product value can go up to$\pm 64$, so softmax is saturated in one-hot. Gradient 0, learning stops.
+
+\textbf{5-2.}Causal mask not used.
+
+During training: the model ``sees'' future tokens and answers correctly, resulting in lower learning loss but no generalization.
+During inference: There are no future tokens, so a learning-inference gap occurs. Performance plummets.
+
+\textbf{5-3.}Number of heads 1 (single head).
+
+Learn only one attention pattern. Decreased performance because grammar, semantics, and discourse relationships must all be processed by one head.
+
+\textbf{5-4.}Number of heads =$d\_{model}$($d\_{head}=1$).
+
+Each head processes only one dimension. The meaning of attention disappears and becomes a simple weighted sum. Practically the same as a linear transformation.
+
+\textbf{5-5.}Attention matrix memory,$L=100,000$.
+
+$100000^2 \times 2$bytes (FP16) = 20 GB. Based on single head. 32 heads = 640 GB. Virtually impossible.
+
+\section{Chapter 6 Answers}
+
+\textbf{6-1.} $d\_{ff} = d\_{model}$.
+
+FFN's expansion-contraction pattern disappears, reducing non-linear expressiveness. Similar to a deeper linear transformation.
+
+\textbf{6-2.}12th floor with no residuals.
+
+When going backwards, learning is not possible because the gradient does not reach the previous layer. Losses are not reduced.
+
+\textbf{6-3.}Necessity of\code{ln\_f}in Pre-LN.
+
+Pre-LN normalizes each block input, but leaves the last block output unnormalized. Normalization is required before inserting into the LM Head.
+
+\textbf{6-4.}SiLU instead of GELU.
+
+Minor performance difference. SiLU ($x \cdot \sigma(x)$) also has a smooth transition. Some models (FFN in LLaMA is SwiGLU but uses SiLU as activation) are adopted.
+
+\textbf{6-5.}100 layers without residual scaling.
+
+The initial activation value distribution accumulates for each layer and explodes. NaN is likely to occur in the early stages of training.
+
+\section{Chapter 7 Answers}
+
+\textbf{7-1.}No weighted ties used, GPT-2 small.
+
+Add$V \times d = 50257 \times 768 \approx 38.6M$parameter. Total 124M$\to$163M.
+
+\textbf{7-2.} Warmup 0.
+
+The gradient at the beginning of training is unstable, so there is a possibility of divergence. Especially serious in Post-LN. Pre-LN is less sensitive but still recommended.
+
+\textbf{7-3.} Label smoothing 0.3.
+
+Strong smoothing makes the model less confident about the correct answer. Generalization improves, but learning loss remains high. Usually 0.1 is appropriate.
+
+\textbf{7-4.}No gradient clipping.
+
+When a gradient explodes, the weights change significantly and the model collapses. Especially dangerous at large learning rates.
+
+\textbf{7-5.}Is PPL 1.0 possible?
+
+Theoretically impossible. Natural language has inherent uncertainty, so the next token cannot be 100% predicted. PPL$\approx$1 is possible in certain sentences only if the learning data is completely memorized, but it is not common.
+
+\section{Chapter 8 Answers}
+
+\textbf{8-1.}Causes Greedy repeating loops.
+
+If a loop is formed where the distribution predicts ``to buy'' highly after ``store'' and ``some store'' after ``to buy'' highly, greedy cannot get out of it. This is because only the path with the highest probability is followed.
+
+\textbf{8-2.} Temperature $\to$ 0.
+
+If$T=0$, softmax becomes argmax and is the same as greedy.  If you are$T=0.01$, you are almost greedy. The distribution is so sharp that the diversity is 0.
+
+\textbf{8-3.}Top-K and then Top-P.
+
+After reducing the candidates to K using Top-K, select up to the cumulative probability P among them. More powerful filtering. Quality improves but variety decreases.
+
+\textbf{8-4.}Sampling suitable for chatbots.
+
+Top-P (P=0.9, T=0.7$\sim$0.9). Balance between variety and consistency. Greedy is monotonous, pure sampling lacks consistency.
+
+\textbf{8-5.}Why speculative decoding is fast.
+
+If the small model quickly generates K tokens, the large model verifies the K tokens at once (parallel processing). If correct, K are adopted in one step, so the number of steps in the large model is reduced to 1/K.

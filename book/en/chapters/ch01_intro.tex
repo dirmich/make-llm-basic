@@ -1,0 +1,234 @@
+\chapter{LLMWhat is}
+\label{ch:intro}
+
+In this chapter, we look at what Large Language Models (LLMs) are, how they have evolved, and why it is worthwhile to try making your own. Because it focuses on concepts rather than code, even readers who are new to deep learning can read it without burden.
+
+\section{What is a language model?}
+
+\keyterm{Language model (language model)}is a statistical model that assigns probabilities to sequences of words (or tokens). Simply put, it is a function$P(w\_1, w\_2, \dots, w\_n)$that determines ``Is this sentence natural?'' with probability. For example, ``the cat is chasing the mouse'' is natural, but ``the mouse is chasing the cat'' may be less natural depending on the context. The language model learns these probabilities.
+
+Historically, language models started from the N-gram model, went through neural network-based models (RNN, LSTM), and developed dramatically with the emergence of Transformer in 2017. In particular, models that learned Internet-scale text with the simple goal of ``next token prediction'' showed amazing language understanding capabilities, ushering in today's LLM era.
+
+\begin{infobox}[Next token prediction]
+The learning goal of LLM is simple: predict the next token by looking at the tokens so far. If you write it as a formula
+\[
+P(w\_t \mid w\_1, w\_2, \dots, w\_{t-1})
+\]
+Accurately estimating this conditional probability is the only goal of a language model. When this simple goal is combined with large amounts of data, complex capabilities such as question answering, code writing, and translation naturally emerge.
+
+Why are these simple goals so powerful? To ``understand'' a language, you must have grammar, common sense, reasoning, and factual knowledge. To accurately predict the next token, the model must learn all of this implicitly. To predict ``a planet'' after ``the Earth orbits the sun...'', common sense in astronomy is needed, and to predict ``2'' after ``1+1='', arithmetic is necessary.
+\end{infobox}
+
+\section{intuition: How to think about language models}
+
+For readers who are new to language models, let me give an analogy. The language model is similar to ``a person who has read a ton of books''. This person was trained to guess the ``next word'' in every sentence. After training, the person ``generates'' an answer by stringing together the following words that seem most natural when asked a question.
+
+Of course, it is different from a real person. Language models ``match patterns'' rather than ``understand'' them. But if you learn enough patterns, you will seemingly understand it. This is how models like GPT-4 provide surprising answers.
+
+\begin{notebox}[Does the language model ``understand''?]
+This question is a matter of philosophical debate. From a functionalism perspective, it can be seen that ``if you respond appropriately to input, you understand,'' or, conversely, it can be seen as, ``if there is no internal representation, it is not understanding.'' This book focuses on ``how it works'' rather than philosophical debates. If you're interested in philosophy, look up Searle's ``Chinese Room'' thought experiment.
+\end{notebox}
+
+\section{LLMDevelopment history of}
+
+\subsection{Statistical Language Models (1990s  --  2000s)}
+
+Early language models used a simple statistical technique called N-gram. It is a method that ``estimates the probability of the next word by looking at the N-1 words immediately preceding it.'' For example, it learns through corpus statistics that ``mat'' is more likely to follow ``the cat sat on the'' than ``banana''.
+
+\begin{lstlisting}[language=Python]
+# N-gram Key ideas of language models (simplified)
+from collections import Counter
+
+corpus = "the cat sat on the mat the cat ran".split()
+# 2-gram (bigram) count
+bigrams = [(corpus[i], corpus[i+1]) for i in range(len(corpus)-1)]
+counts = Counter(bigrams)
+# P("mat" | "the") estimate
+p_mat_given_the = counts[("the", "mat")] / sum(1 for w1, w2 in bigrams if w1 == "the")
+print(f"P(mat|the) = {p_mat_given_the:.2f}")
+\end{lstlisting}
+
+However, N-gram had serious limitations. There was a ``sparsity'' problem in that the context could only be seen briefly (N was usually 3$\sim$5), and unlearned combinations were assigned a probability of 0. A smoothing technique was developed to compensate for this, but it was not a fundamental solution.
+
+Another problem was that it did not capture the ``meaning of the words.'' Although ``dog'' and ``puppy'' have similar meanings, they are treated as completely different words in N-gram. To solve this problem, a neural network-based model that converts words into distributed representations has emerged.
+
+\subsection{Neural Network Language Models (2003  --  2017)}
+
+Bengio et al. (2003) first proposed a neural network-based language model. The method was to express words as low-dimensional dense vectors (embeddings) and put these embeddings into a neural network to predict the probability of the next word. Later, with the advent of RNN (Recurrent Neural Network) and LSTM (Long Short-Term Memory), it became possible to process longer contexts.
+
+\begin{infobox}[Word2Vec and Embedding]
+Mikolov et al. (2013)'s Word2Vec expressed words as 100$\sim$300-dimensional vectors and showed that ``words with similar meanings are close in the vector space.'' Famous example:$\vec{\text{king}} - \vec{\text{man}} + \vec{\text{woman}} \approx \vec{\text{queen}}$. This idea is the basis for the embedding we will implement in Chapter 4.
+\end{infobox}
+
+\begin{warnbox}[Limitations of RNN]
+RNN is a structure that transfers the hidden state of a previous point to the current point. In theory, it can handle infinite contexts, but in practice, it has the problem of vanishing or exploding gradients during backpropagation. As a result, the actual processable context length was only a few tens to hundreds of tokens. Additionally, only sequential processing was possible, making GPU parallelization inefficient.
+
+LSTM (Long Short-Term Memory) partially alleviated this problem with a gate mechanism, but it was not a fundamental solution. Contexts longer than 100 words were still difficult.
+\end{warnbox}
+
+\subsection{Rise of the Transformers (2017)}
+
+``Attention Is All You Need'' published by Vaswani et al. in 2017 completely changed the landscape of language models. We proposed a Transformer structure that processes sequences only with an attention mechanism without RNN. There are two key innovations in Transformer.
+
+\begin{enumerate}
+\item\textbf{parallel processing}: Instead of processing sequentially like RNN, all positions in the sequence can be processed simultaneously, maximizing GPU utilization. This improved the learning speed by dozens of times.
+\item\textbf{long distance dependency}: Attention computes direct connections between every pair of positions in a sequence, so it also captures relationships between distant tokens well. Even words that are 1,000 words apart can be referenced with a single attention.
+\end{enumerate}
+
+\begin{figure}[htbp]
+\centering
+\begin{tikzpicture}[
+  scale=0.9,
+  every node/.style={font=\small\sffamily},
+  bar/.style={inkblue, fill=inkblue!30},
+  lbl/.style={inkgray, anchor=south, font=\scriptsize\sffamily}
+]
+  % axis
+  \draw[inkblue, line width=0.5pt, ->] (0, 0) -- (11, 0);
+  \draw[inkblue, line width=0.5pt, ->] (0, 0) -- (0, 5);
+  \node[inkgray, anchor=east] at (-0.2, 4.7) {params};
+  \node[inkgray, anchor=north] at (10.5, -0.2) {year};
+  % Logarithmic scale bar (approximate)
+  \foreach \x/\h/\name in {1/0.2/GPT-1, 2.5/1.2/BERT, 4/1.8/GPT-2, 5.5/3.0/T5, 7/4.0/GPT-3, 8.5/4.5/PaLM, 10/4.8/GPT-4} {
+    \draw[bar] (\x-0.3, 0) rectangle (\x+0.3, \h);
+    \node[lbl] at (\x, \h+0.05) {};
+    \node[inkgray, anchor=south, font=\tiny\sffamily, rotate=45] at (\x, 0.05) {\name};
+  }
+\end{tikzpicture}
+\caption{LLM Development trend of number of parameters (log scale, (Approximately). GPT-1 (2018) is 1.100 million, GPT-4 (2023) is estimated at 1.7 trillion.}
+\label{fig:llm-scaling}
+\end{figure}
+
+\subsection{GPT Series and Scaling Laws (2018)  --  today)}
+
+OpenAI's GPT series takes a pre-training approach with large-scale text using a transformer decoder structure. GPT-1 (2018) had 117 million parameters, but GPT-2 (2019) grew rapidly to 1.5 billion parameters, and GPT-3 (2020) grew rapidly to 175 billion parameters. In this process, it was discovered that performance improves predictably by increasing model size, data size, and computation volume.
+
+Kaplan et al. (2020)'s scaling law showed that the loss follows a power law for model size$N$, data size$D$, and computation amount$C$:
+
+\[
+\mathcal{L}(N, D, C) \approx A \cdot N^{-\alpha\_N} + B \cdot D^{-\alpha\_D} + E \cdot C^{-\alpha\_C} + L\_\infty
+\]
+
+The practical implications of this law are clear: to grow your model, you need to grow your data as well. If a 10 billion parameter model is trained with 1 billion tokens, it will overfit. Hoffmann et al. (2022)'s Chinchilla paper suggested that approximately 20 tokens per parameter$N$is ideal.
+
+\subsection{The Rise of Sort (2022)  --  today)}
+
+GPT-3 (2020) was powerful with 175 billion parameters, but did not provide helpful answers to user questions. It just predicted the ``next token''. The reason why ChatGPT was innovative in 2022 was not in the model size but in\keyterm{array(alignment)}.
+
+Reinforcement learning using human feedback (RLHF) transformed GPT-3 into a ``useful chatbot.'' Afterwards, simpler and more efficient sorting techniques such as Direct Preference Optimization (DPO) and Constitutional AI emerged. Chapter 8 of Volume 2 implements these techniques directly.
+
+\section{LLMMain applications of}
+
+LLMs are used in a variety of fields:
+
+\subsection{Natural language processing traditional tasks}
+\begin{itemize}
+\item\textbf{machine translation}: Google Translate, DeepL, etc. are based on Transformers.
+\item\textbf{summation}: Short summary of a long document. News, papers, meeting minutes, etc.
+\item\textbf{Sentiment analysis}: Determination of positive/negative text. Reviews, social media analysis.
+\item\textbf{Entity name recognition}: Extract people, places, organizations, etc. from text.
+\end{itemize}
+
+\subsection{Create task}
+\begin{itemize}
+\item\textbf{conversation}: ChatGPT, Claude, Gemini, etc.
+\item\textbf{Write code}: GitHub Copilot, Cursor. Various languages ​​such as Python and JavaScript.
+\item\textbf{creation}: novel, poetry, screenplay. AI writer tools.
+\item\textbf{email/Write a document}: Business email, draft report.
+\end{itemize}
+
+\subsection{bailiwick}
+\begin{itemize}
+\item\textbf{medical treatment}: Diagnostic assistance, medical history summary, patient counseling.
+\item\textbf{law}: Case law search, contract review, legal advice.
+\item\textbf{education}: Personalized tutor, problem creation, and assignment grading.
+\item\textbf{finance}: Market analysis, report writing, fraud detection.
+\end{itemize}
+
+\subsection{multimodal}
+Modern LLM processes not only text but also images, audio, and video. GPT-4V, Gemini, Claude 3, etc. can understand and explain images.
+
+\section{Why you should make it yourself}
+
+The question is legitimate: ``Why create your own when you can just download the model from HuggingFace?'' There are three answers.
+
+\textbf{first, depth of understanding}is different.  Calling\code{model.generate()}and knowing what happens inside it are two different levels of understanding. If you create it yourself, debugging, optimization, and customization are all possible. You can diagnose bottlenecks when inference speeds are slow, and know where to fix them when experimenting with new architectures.
+
+\textbf{second, control}occurs. Whether you want to increase inference speed, reduce memory, or experiment with a new architecture, the difference between the response ability of someone who knows the internals and someone who does not is heaven and earth. What if I use the HuggingFace model as is and get strange output? Anyone who knows the internals knows where to debug.
+
+\textbf{third, future proof}c. The LLM field changes rapidly. New papers are released every week, and you need to have a solid foundation to understand them. Latest techniques such as RoPE, GQA, and SwiGLU are ultimately variations of attention, FFN, and regularization. If you build your basics through this book, you can naturally absorb advanced topics such as distributed learning, quantization, and sorting covered in Volume 2\textit{Make LLM-advanced}.
+
+\begin{warnbox}[Limitations of this book]
+This book does not aim to ``create a real ChatGPT''. The model created in Volume 1 is a small-scale GPT with 10 million$\sim$100 million parameters, and its quality is about GPT-2 small. However, its structure is essentially the same as GPT-3 and GPT-4. ``Size'' is covered in Volume 2, and ``Structure and Principle'' is covered in Volume 1.
+
+Why not make a larger model? Training a 175B model requires hundreds of GPUs over several weeks and costs hundreds of millions of dollars. This is difficult to follow in a book. Instead, if you learn the principle with a small model, you will learn that the same principle applies to the large model.
+\end{warnbox}
+
+\section{The model this book will create}
+
+After completing Volume 1, readers will be able to create the following models themselves.
+
+\begin{itemize}
+\item\textbf{architecture}: GPT style transformer decoder (6$\sim$12 layers, 8 heads, 512$\sim$768 embedding dimensions)
+\item\textbf{tokenizer}: Direct implementation of both BPE (Byte Pair Encoding) and Unigram
+\item\textbf{learning}: AdamW + cosine LR schedule + warm-up
+\item\textbf{generation}: Implements all Greedy, Top-K, Top-P, and Temperature sampling
+\item\textbf{evaluation}: Cross-entropy loss and perplexity calculation
+\end{itemize}
+
+Volume 2\textit{Make LLM-advanced}builds on this foundation by adding distributed learning (DDP, FSDP, ZeRO), latest architecture (RoPE, GQA, SwiGLU, MoE), quantization (INT8/INT4/AWQ), alignment (SFT, RLHF, DPO, LoRA), and inference optimization (KV cache, PagedAttention).
+
+\section{Learning Roadmap}
+
+\begin{figure}[htbp]
+\centering
+\begin{tikzpicture}[
+  every node/.style={font=\small\sffamily},
+  box/.style={draw=inkblue, fill=inkblue!8, rounded corners=2pt, minimum width=3cm, minimum height=0.8cm, align=center},
+  arr/.style={-{Stealth[length=4pt]}, inkblue!70, thick}
+]
+  \node[box] (ch1) at (0, 0) {Chapter 1\\Introduction};
+  \node[box] (ch2) at (3.5, 0) {Chapter 2\\Environmental Settings};
+  \node[box] (ch3) at (7, 0) {Chapter 3\\Tokenizer};
+  \node[box] (ch4) at (10.5, 0) {Chapter 4\\Embedding};
+  \node[box] (ch5) at (0, -1.8) {Chapter 5\\Attention};
+  \node[box] (ch6) at (3.5, -1.8) {Chapter 6\\Transformers};
+  \node[box] (ch7) at (7, -1.8) {Chapter 7\\GPT Learning};
+  \node[box] (ch8) at (10.5, -1.8) {Chapter 8\\Creation};
+  \node[box, fill=inkred!10, draw=inkred] (ch9) at (5.25, -3.6) {Chapter 9 \\ Summary};
+
+  \draw[arr] (ch1) -- (ch2);
+  \draw[arr] (ch2) -- (ch3);
+  \draw[arr] (ch3) -- (ch4);
+  \draw[arr] (ch4) -- (ch5);
+  \draw[arr] (ch5) -- (ch6);
+  \draw[arr] (ch6) -- (ch7);
+  \draw[arr] (ch7) -- (ch8);
+  \draw[arr] (ch8) -- (ch9);
+\end{tikzpicture}
+\caption{Volume 1 Learning Roadmap. Each chapter builds on the modules of the previous chapter. importuse it.}
+\label{fig:learning-roadmap}
+\end{figure}
+
+\section{summation}
+
+\begin{itemize}
+\item A language model is a model that assigns probabilities to text sequences, and its core goal is predicting the next token.
+\item From N-gram to RNN/LSTM, Transformer appeared in 2017, ushering in the LLM era.
+\item Performance improves predictably when models, data, and operations grow according to scaling laws.
+\item After 2022, alignment (RLHF/DPO) has transformed ``simple LM'' into ``useful chatbot''.
+\item Creating it yourself gives you depth of understanding, control, and future-proofing.
+\item Volume 1 covers small-scale GPT, and Volume 2 covers ChatGPT-level techniques.
+\end{itemize}
+
+\section{practice problems}
+
+\begin{enumerate}
+\item Answer the following questions using ChatGPT, Claude, or Gemini. ``If a language model is trained to predict the next token, how can it answer the question?'' Evaluate the model's answer.
+\item Consider how a human would rate the probability of the next word in the following sentence: ``The sun is in the east...''. ``Soaring'' will be more than 99\%. Why is this probability so high?
+\item Explain the ``sparsity problem'' among the limitations of the N-gram model. How does N-gram predict the next word of the untrained 3-gram ``polar bear dancing''?
+\item Explain why transformers are better than RNNs for parallel processing.
+\item According to the scaling law, if the model is increased by 10 times, how much should the data be increased? (Based on Chinchilla)
+\end{enumerate}
+
+In the next chapter, we set up Python, PyTorch, and the code repository for this book for full-scale implementation.
