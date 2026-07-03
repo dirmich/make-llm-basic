@@ -6,7 +6,7 @@
 
 ## 소개
 
-이 패키지는 **Make LLM-basic** 책의 전체 소스 코드와 LaTeX 원고를 포함합니다. 딥러닝 초보자가 토크나이저부터 텍스트 생성까지 LLM의 모든 구성 요소를 직접 구현해보는 것을 목표로 합니다.
+이 패키지는 **Make LLM-basic** 책의 전체 실습용 소스 코드를 포함합니다. 딥러닝 초보자가 토크나이저부터 텍스트 생성까지 LLM의 모든 구성 요소를 직접 구현해보는 것을 목표로 합니다.
 
 ## 디렉토리 구조
 
@@ -19,11 +19,6 @@ make-llm-basic/
 │   ├── inference/            # 샘플러, 생성
 │   └── utils/                # 설정, 시드, 로깅
 ├── tests/                    # pytest 단위 테스트 (48개)
-├── book/                     # LaTeX 원고
-│   ├── main.tex              # 메인 파일
-│   ├── shared/preamble.tex   # 공유 프리앰블
-│   ├── chapters/             # 각 장 .tex 파일
-│   └── make_llm_basic.pdf    # 컴파일된 PDF
 ├── pyproject.toml
 ├── requirements.txt
 └── README.md (이 파일)
@@ -81,21 +76,10 @@ text = generate(model, tokenizer, prompt="the", max_new_tokens=20,
 print(f"Generated: {text}")
 ```
 
-## 책 PDF 빌드
-
-PDF는 Tectonic으로 컴파일할 수 있습니다.
-
-```bash
-cd book
-tectonic -o . --outname make_llm_basic main.tex
-```
-
 ## 라이선스
 
 - 코드: MIT
-- 책 본문: CC BY-NC-SA 4.0
 
 ## 관련 자료
 
 - 2권: Make LLM-advanced (분산 학습, 양자화, RLHF 등)
-- PRD/Plan/Task 문서: 별도 PDF
