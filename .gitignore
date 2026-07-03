@@ -20,3 +20,6 @@ tools/
 book/
 *.pdf
 Make-LLM-basic.pdf
+
+# 파이썬 패키지 메타데이터 (빌드 부산물)
+*.egg-info/
