@@ -2,16 +2,21 @@
 .venv/
 __pycache__/
 *.pyc
+.pytest_cache/
 
 # IDE 설정
 .idea/
 .vscode/
 
-# 사용자 요청 제외 폴더
+# 임시 문서 및 자동 생성 데이터
 docs/
 .agents/
 .omx/
-.pytest_cache/
+
+# 빌드 및 컴파일 유틸리티 스크립트 격리 폴더
+tools/
+
+# 책 원고 및 출판 파일 차단 (보안)
 book/
-/translate_book.py
-/translate_comments.py
+*.pdf
+Make-LLM-basic.pdf
